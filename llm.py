@@ -38,7 +38,7 @@ ESPERA_PRIMER_TOKEN = 4.0    # segundos sin respuesta de la nube antes de pasar 
 RESPUESTA_RAPIDA = (os.getenv("RESPUESTA_RAPIDA") or "1") != "0"
 CONSULTAS = {"buscar_en_cerebro", "leer_nota", "notas_recientes", "procesar_bandeja",
              "calendario_eventos", "correo_buscar", "correo_leer", "drive_buscar", "drive_leer",
-             "buscar_archivos", "leer_archivo", "listar_carpeta"}
+             "buscar_archivos", "leer_archivo", "listar_carpeta", "buscar_web"}
 ESPERAS = ["Déjame mirar. ", "Un momento. ", "Lo compruebo. "]
 
 
