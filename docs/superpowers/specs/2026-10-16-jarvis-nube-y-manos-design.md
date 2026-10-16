@@ -48,7 +48,7 @@ Criterios de éxito:
    - Permisos por **lista de permitidos**, no de prohibidos: `--allowedTools` con Read, Glob, Grep,
      Edit, Write y WebSearch; sin Bash libre (solo patrones concretos de solo lectura como `git status`).
      En modo `-p` todo lo no permitido se deniega solo. Carpeta de trabajo = la indicada (validada contra
-     `CARPETAS_PERMITIDAS`), por defecto `Documentos\Jarvis	areas`.
+     `CARPETAS_PERMITIDAS`), por defecto `Documentos\Jarvis\tareas`.
    - Proceso: hilo con `subprocess.Popen` (`stdin=DEVNULL`, salida a archivo de log, `CREATE_NO_WINDOW`),
      tiempo máximo 15 min, y se mata el árbol de procesos al cancelar o al vencer.
    - Jarvis responde al momento ("Me pongo con ello") y, al terminar, dice un resumen de lo hecho y lo
