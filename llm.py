@@ -125,6 +125,8 @@ class IA:
         self.stats = {}                        # metricas de la ultima respuesta de Ollama
         self.contexto_fn = contexto_fn         # texto (fecha/hora) que se añade al ultimo mensaje del usuario
         self.corregidas = 0                    # veces que el modelo afirmo algo sin usar herramientas
+        self._ultimo_arranque = 0.0            # ultima vez que se intento abrir Ollama
+        self.on_reparacion = None              # funcion(origen, texto) para anotar autorreparaciones
 
     # ------------------------------------------------------------------ descubrimiento
     def modelos_ollama(self, forzar=False):
@@ -189,6 +191,9 @@ class IA:
             except IAError as e:
                 errores.append(e)
                 del history[n_antes:]              # deshacer lo que haya dejado a medias
+                if self.on_reparacion and prov != orden[-1]:
+                    siguiente = orden[orden.index(prov) + 1]
+                    self.on_reparacion("ia", f"{prov} fallo ({e.detalle[:120]}): pruebo con {siguiente}")
         # todos fallaron: priorizar el error mas util
         principal = errores[0] if errores else IAError(
             "No tengo ninguna inteligencia configurada.",
@@ -208,8 +213,35 @@ class IA:
                 break
         return msgs
 
+    def arrancar_ollama(self, espera=20):
+        """Autorreparacion: si Ollama esta cerrado y es local, lo abre y espera a que responda.
+        Como mucho un intento por minuto. Devuelve True si Ollama responde despues."""
+        if time.time() - self._ultimo_arranque < 60 or "127.0.0.1" not in OLLAMA_URL and "localhost" not in OLLAMA_URL:
+            return False
+        self._ultimo_arranque = time.time()
+        import shutil
+        import subprocess
+        exe = shutil.which("ollama") or os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")
+        if not os.path.exists(exe):
+            return False
+        try:
+            subprocess.Popen([exe, "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError:
+            return False
+        fin = time.time() + espera
+        while time.time() < fin:
+            if self.modelos_ollama(forzar=True) is not None:
+                return True
+            time.sleep(1)
+        return False
+
     def _ollama(self, history, on_texto=None):
         nombres = self.modelos_ollama(forzar=True)
+        if nombres is None and self.arrancar_ollama():
+            if self.on_reparacion:
+                self.on_reparacion("ollama", "Ollama estaba cerrado: lo he abierto yo")
+            nombres = self.modelos_ollama(forzar=True)
         if nombres is None:
             raise IAError(
                 "No consigo conectar con Ollama. Comprueba que está instalado y abierto.",

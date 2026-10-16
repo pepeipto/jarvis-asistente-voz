@@ -56,6 +56,8 @@ Al empezar la noche era 3,2 s. Lo que lo consigue:
   `MICROFONO=Realtek` (fija un micrófono por parte de su nombre; si no, Jarvis usa el predeterminado
   y, si está mudo, cambia solo a otro que funcione).
 - Historial de versiones y mejoras pendientes de aprobar: `CHANGELOG.md`.
+- Si algo falla, mira `errores_log.txt`: cada fallo, qué lo causó y qué hizo Jarvis para arreglarlo.
+- Cada versión está guardada con git: `git tag` las lista y `git checkout v1.3.1` vuelve a una anterior.
 
 ## Grafica y juegos
 qwen3.8:27b ocupa ~17 GB de la grafica y se queda cargado 30 minutos tras el ultimo uso.
