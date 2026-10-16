@@ -40,6 +40,8 @@ def _env(nombre, defecto=""):
 
 
 ANTHROPIC_KEY = _env("ANTHROPIC_API_KEY")
+ANTHROPIC_BASE_URL = _env("ANTHROPIC_BASE_URL")      # si esta, se usa el proxy (OmniRoute)
+ANTHROPIC_TOKEN = _env("ANTHROPIC_AUTH_TOKEN")
 ELEVEN_KEY = _env("ELEVENLABS_API_KEY")
 VOICE_ID = _env("ELEVENLABS_VOICE_ID")
 MODEL = _env("CLAUDE_MODEL", "claude-sonnet-5-5") or "claude-sonnet-5-5"
@@ -936,7 +938,8 @@ def crear_ui():
 def crear_ia():
     nueva = llm.IA(TOOLS, system_prompt, run_tool, anthropic_key=ANTHROPIC_KEY, anthropic_model=MODEL,
                    proveedor=_env("LLM_PROVEEDOR", "auto") or "auto", ollama_model=_env("OLLAMA_MODEL"),
-                   contexto_fn=contexto)
+                   contexto_fn=contexto, anthropic_base_url=ANTHROPIC_BASE_URL,
+                   anthropic_token=ANTHROPIC_TOKEN)
 
     def reparacion(origen, texto):
         registro.error(origen, texto, "reparado automaticamente")
