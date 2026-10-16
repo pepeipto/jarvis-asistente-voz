@@ -1,0 +1,18 @@
+# Claves y permisos (nunca al repositorio)
+.env
+google/
+
+# Datos personales: tus notas viven en cerebro\ (Obsidian), no en el historial del codigo
+cerebro/
+prueba_cerebro/
+
+# Entorno de Python y cache
+venv/
+__pycache__/
+*.pyc
+
+# Registros e informes que se generan solos
+*_log.txt
+diagnostico.txt
+modelos.txt
+prueba_auto.txt

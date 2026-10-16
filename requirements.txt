@@ -1,0 +1,11 @@
+anthropic>=0.40.0
+sounddevice>=0.4.7
+numpy>=1.26
+requests>=2.31
+python-dotenv>=1.0
+websocket-client>=1.8
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
+pypdf>=4.0
+python-docx>=1.1
+# Opcional (solo si usas STT_MODE=local): faster-whisper
