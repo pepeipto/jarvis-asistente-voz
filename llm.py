@@ -37,7 +37,8 @@ ESPERA_PRIMER_TOKEN = 4.0    # segundos sin respuesta de la nube antes de pasar 
 
 RESPUESTA_RAPIDA = (os.getenv("RESPUESTA_RAPIDA") or "1") != "0"
 CONSULTAS = {"buscar_en_cerebro", "leer_nota", "notas_recientes", "procesar_bandeja",
-             "calendario_eventos", "correo_buscar", "correo_leer", "drive_buscar", "drive_leer"}
+             "calendario_eventos", "correo_buscar", "correo_leer", "drive_buscar", "drive_leer",
+             "buscar_archivos", "leer_archivo", "listar_carpeta"}
 ESPERAS = ["Déjame mirar. ", "Un momento. ", "Lo compruebo. "]
 
 
@@ -46,7 +47,7 @@ def confirmacion_directa(calls, resultados):
     confirmacion corta sin pedirle otra vuelta a la IA (ahorra ~1 s). Si no, None."""
     frases = []
     for c, res in zip(calls, resultados):
-        if res.lower().startswith(("error", "no conozco", "ruta no valida", "no se pudo")):
+        if res.lower().startswith(("error", "no conozco", "no encuentro", "ruta no valida", "no se pudo")):
             return None
         n = c["name"]
         if n == "anadir_al_diario":
@@ -54,8 +55,8 @@ def confirmacion_directa(calls, resultados):
         elif n == "guardar_nota":
             t = (c["args"].get("titulo") or "").strip()
             frases.append(f"Guardado en tus notas: {t}." if t else "Guardado en tus notas.")
-        elif n == "abrir_aplicacion":
-            frases.append(f"Abriendo {c['args'].get('nombre', 'la aplicación')}.")
+        elif n in ("abrir_aplicacion", "abrir_programa", "abrir_carpeta"):
+            frases.append(res)
         elif n == "abrir_web":
             frases.append(res if res.startswith("Por seguridad") else "Abierto en el navegador.")
         elif n in ("calendario_crear", "correo_enviar", "drive_crear_documento"):
