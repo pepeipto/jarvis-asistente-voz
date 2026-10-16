@@ -31,7 +31,9 @@ Diseño: `docs/superpowers/specs/2026-10-16-jarvis-nube-y-manos-design.md` (revi
 
 **Comprobado:** 32 pruebas automáticas (`pruebas_unidad.py`). Jarvis real en modo texto: conversación,
 hora, abrir Bloc de notas y Descargas, búsqueda web del tiempo, y una tarea completa (encargo → "sí" →
-Claude Code crea el archivo → aviso). Latencia media 0,93 s en 10 frases.
+Claude Code crea el archivo → aviso). Latencia media 0,93 s en 10 frases. Tras 5 min sin uso la primera
+respuesta tardaba 3,3 s: Jarvis mantiene la conexión despierta con un aviso de 1 token cada 4 min de inactividad.
+Texto UTF-16 legible y el contenido externo no puede cerrar su marca (hallazgos de la revisión final).
 **Sin comprobar todavía:** con la voz y la ventana 3D abiertas.
 
 ## [1.4.0] - 16/10/2026 - Autorreparación y registro de errores
