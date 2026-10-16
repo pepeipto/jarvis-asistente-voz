@@ -251,8 +251,23 @@ def cerebro():
     out("Estadisticas:", memoria.estadisticas())
 
 
+# ---------------------------------------------------------------- 8. claude code
+def claude_code():
+    seccion("8. CLAUDE CODE (tareas grandes)")
+    import subprocess
+    import tareas
+    exe = tareas.ejecutable()
+    if not exe:
+        out("No instalado. Instalalo con: npm install -g @anthropic-ai/claude-code")
+        return
+    r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=30)
+    out("Ejecutable:", exe)
+    out("Version:", (r.stdout or r.stderr).strip())
+
+
 for nombre, fn in (("sistema", sistema), ("gpu", gpu), ("ollama", ollama), ("bench", bench),
-                   ("elevenlabs", elevenlabs), ("audio", audio), ("cerebro", cerebro)):
+                   ("elevenlabs", elevenlabs), ("audio", audio), ("cerebro", cerebro),
+                   ("claude_code", claude_code)):
     paso(nombre, fn)
 seccion("FIN")
 out(time.strftime("%H:%M:%S"))

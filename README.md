@@ -17,7 +17,8 @@ con Google Calendar, Gmail y Drive. Tiene una interfaz 3D (un orbe animado con T
   enlaza personas y proyectos con `[[enlaces]]` e importa PDF y Word dejados en `cerebro/inbox`.
 - **Google**: consultar y crear citas, buscar, leer, redactar y enviar correos, buscar y leer archivos
   de Drive y crear Google Docs.
-- **PC**: abrir aplicaciones y páginas web, buscar en Google, decir la hora.
+- **PC**: abrir cualquier programa y carpeta, buscar, listar y leer archivos (solo en tus carpetas),
+  buscar en internet y encargar tareas grandes a Claude Code con confirmación por voz.
 - **Autorreparación**: si se cae la voz, el micrófono queda mudo, Ollama está cerrado o se pierde el
   permiso de Google, lo detecta, lo arregla si puede y lo anota en `errores_log.txt`.
 - **Seguridad**: el contenido de notas, correos y documentos se trata como datos, no como órdenes;
@@ -63,6 +64,10 @@ empieza a hablar.
 | `jarvis.py` | Programa principal: voz, ventana, herramientas del PC y bucle de conversación |
 | `llm.py` | Cerebro de IA: Ollama y Claude con herramientas, respaldo entre proveedores y corrección de respuestas |
 | `memoria.py` | Segundo cerebro: guardar, buscar e importar documentos |
+| `pc.py` | Programas, carpetas y archivos del PC (con carpetas permitidas) |
+| `web.py` | Búsqueda web (DuckDuckGo) |
+| `tareas.py` | Tareas grandes con Claude Code y confirmación por voz |
+| `pruebas_unidad.py` | Pruebas rápidas sin voz ni red |
 | `google_conector.py`, `conectar_google.py` | Calendar, Gmail y Drive (OAuth) |
 | `interfaz_web.py`, `ui/` | Ventana 3D local (Three.js) |
 | `interfaz.py` | Ventana clásica sencilla |
@@ -74,7 +79,8 @@ empieza a hablar.
 Fuera del repositorio (ver `.gitignore`): `.env` (claves), `google/` (permisos de Google), `cerebro/`
 (tus notas), registros y entornos. El registro de errores no guarda lo que dices, ni correos ni notas.
 
-## Próxima versión (1.5, en desarrollo)
-Claude Haiku como cerebro principal a través de OmniRoute con streaming y respaldos, abrir cualquier
-programa instalado, buscar y leer archivos del PC, búsqueda web y encargar tareas grandes a Claude Code
-con confirmación por voz. Diseño: [docs/superpowers/specs](docs/superpowers/specs).
+## Versión 1.5
+Claude Haiku como cerebro principal a través de OmniRoute (0,93 s de media hasta la primera palabra),
+abrir cualquier programa instalado, buscar y leer archivos del PC, búsqueda web y encargar tareas grandes
+a Claude Code con confirmación por voz. Detalle en [CHANGELOG.md](CHANGELOG.md) y diseño en
+[docs/superpowers/specs](docs/superpowers/specs).

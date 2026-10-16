@@ -10,6 +10,32 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.5.0] - 16/10/2026 - Cerebro en la nube y manos en el PC
+Diseño: `docs/superpowers/specs/2026-10-16-jarvis-nube-y-manos-design.md` (revisado también por Gemini).
+
+- **Cerebro en la nube:** Claude Haiku (`cc/claude-haiku-5-5`) a través de OmniRoute, con respuesta en
+  streaming (habla frase a frase). Si falla o no responde en 4 s, usa `auto/best-free` de OmniRoute; sin
+  internet, Ollama con un modelo ligero (`OLLAMA_MODEL_RESPALDO=granite4.1:8b`). Ollama ya no se carga al arrancar.
+- **Programas y carpetas:** abre cualquier programa del menú Inicio y de la tienda (205 en este PC) y
+  carpetas por su nombre ("descargas", "documentos"...).
+- **Archivos:** busca, lista y lee archivos (texto, PDF, Word) solo dentro de tus carpetas
+  (`CARPETAS_PERMITIDAS`). Rutas resueltas antes de comprobarlas (enlaces, junctions, `..`); nunca
+  `Windows`, `Program Files`, `AppData`, `.ssh`, `.env`. No descarga archivos que solo están en OneDrive.
+- **Internet:** `buscar_web` (DuckDuckGo, 0,75 s) y Claude redacta la respuesta.
+- **Tareas grandes:** `encargar_tarea` las hace Claude Code (`cc/claude-sonnet-5-5`) en segundo plano.
+  Jarvis repite la tarea exacta y solo empieza si dices "sí"/"adelante" (lo comprueba el código, no la IA).
+  Claude Code solo puede leer, buscar, editar y escribir en la carpeta de trabajo (sin consola libre),
+  15 minutos como máximo. Aviso por voz al terminar.
+- **Seguridad:** lo que llega de archivos, correos, Drive e internet va marcado como `<contenido_no_fiable>`
+  y la IA no sigue instrucciones de ahí. Tras leerlo, 3 minutos sin abrir enlaces ni encargar tareas.
+
+**Comprobado:** 32 pruebas automáticas (`pruebas_unidad.py`). Jarvis real en modo texto: conversación,
+hora, abrir Bloc de notas y Descargas, búsqueda web del tiempo, y una tarea completa (encargo → "sí" →
+Claude Code crea el archivo → aviso). Latencia media 0,93 s en 10 frases. Tras 5 min sin uso la primera
+respuesta tardaba 3,3 s: Jarvis mantiene la conexión despierta con un aviso de 1 token cada 4 min de inactividad.
+Texto UTF-16 legible y el contenido externo no puede cerrar su marca (hallazgos de la revisión final).
+**Sin comprobar todavía:** con la voz y la ventana 3D abiertas.
+
 ## [1.4.0] - 16/10/2026 - Autorreparación y registro de errores
 Aprobadas: P1, P2 y P6.
 
