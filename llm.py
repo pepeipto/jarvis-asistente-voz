@@ -31,12 +31,15 @@ AVISO_SIN_HERRAMIENTA = ("[Aviso del sistema] En esta respuesta no has llamado a
                          "guardado ni buscado nada. Si el usuario pidio guardar, apuntar o consultar algo de su cerebro, "
                          "llama ahora a la herramienta adecuada. Si no hacia falta ninguna, responde de nuevo sin afirmar "
                          "que has guardado o encontrado algo.")
-CTX = int(os.getenv("OLLAMA_CTX") or 0)    # 0 = automatico (8192, o 6144 en modelos de 30B o mas)
+CTX = int(os.getenv("OLLAMA_CTX") or 0)
+ESPERA_PRIMER_TOKEN = 4.0    # segundos sin respuesta de la nube antes de pasar al modelo gratuito
+INACTIVIDAD = 240            # tras 4 min sin usar la nube, la primera respuesta tarda ~3 s mas: aviso minimo    # 0 = automatico (8192, o 6144 en modelos de 30B o mas)
 
 
 RESPUESTA_RAPIDA = (os.getenv("RESPUESTA_RAPIDA") or "1") != "0"
 CONSULTAS = {"buscar_en_cerebro", "leer_nota", "notas_recientes", "procesar_bandeja",
-             "calendario_eventos", "correo_buscar", "correo_leer", "drive_buscar", "drive_leer"}
+             "calendario_eventos", "correo_buscar", "correo_leer", "drive_buscar", "drive_leer",
+             "buscar_archivos", "leer_archivo", "listar_carpeta", "buscar_web"}
 ESPERAS = ["Déjame mirar. ", "Un momento. ", "Lo compruebo. "]
 
 
@@ -45,7 +48,7 @@ def confirmacion_directa(calls, resultados):
     confirmacion corta sin pedirle otra vuelta a la IA (ahorra ~1 s). Si no, None."""
     frases = []
     for c, res in zip(calls, resultados):
-        if res.lower().startswith(("error", "no conozco", "ruta no valida", "no se pudo")):
+        if res.lower().startswith(("error", "no conozco", "no encuentro", "ruta no valida", "no se pudo")):
             return None
         n = c["name"]
         if n == "anadir_al_diario":
@@ -53,8 +56,8 @@ def confirmacion_directa(calls, resultados):
         elif n == "guardar_nota":
             t = (c["args"].get("titulo") or "").strip()
             frases.append(f"Guardado en tus notas: {t}." if t else "Guardado en tus notas.")
-        elif n == "abrir_aplicacion":
-            frases.append(f"Abriendo {c['args'].get('nombre', 'la aplicación')}.")
+        elif n in ("abrir_aplicacion", "abrir_programa", "abrir_carpeta"):
+            frases.append(res)
         elif n == "abrir_web":
             frases.append(res if res.startswith("Por seguridad") else "Abierto en el navegador.")
         elif n in ("calendario_crear", "correo_enviar", "drive_crear_documento"):
@@ -110,7 +113,7 @@ def _args(a):
 class IA:
     def __init__(self, tools, system_fn, run_tool, anthropic_key="", anthropic_model="claude-sonnet-5-5",
                  proveedor="auto", ollama_model="", contexto_fn=None,
-                 anthropic_base_url="", anthropic_token=""):
+                 anthropic_base_url="", anthropic_token="", modelo_respaldo_nube="auto/best-free"):
         self.tools = tools                    # herramientas en formato Anthropic (input_schema)
         self.system_fn = system_fn
         self.run_tool = run_tool
@@ -118,6 +121,7 @@ class IA:
         self.anthropic_base_url = anthropic_base_url   # p. ej. OmniRoute (http://localhost:20128)
         self.anthropic_token = anthropic_token         # token Bearer del proxy
         self.anthropic_model = anthropic_model
+        self.modelo_respaldo_nube = modelo_respaldo_nube   # gratuito de OmniRoute si el principal falla
         self.proveedor = (proveedor or "auto").lower()
         self.ollama_model_pref = ollama_model
         self._cliente_anthropic = None
@@ -130,6 +134,7 @@ class IA:
         self.corregidas = 0                    # veces que el modelo afirmo algo sin usar herramientas
         self._ultimo_arranque = 0.0            # ultima vez que se intento abrir Ollama
         self.on_reparacion = None              # funcion(origen, texto) para anotar autorreparaciones
+        self._ultimo_uso = 0.0                 # ultima vez que se hablo con la nube
 
     # ------------------------------------------------------------------ descubrimiento
     def modelos_ollama(self, forzar=False):
@@ -162,6 +167,9 @@ class IA:
 
     def describir(self):
         """Texto corto para mostrar en pantalla: que IA se usara."""
+        if self._hay_anthropic() and self.proveedor in ("auto", "anthropic"):
+            via = " (OmniRoute)" if self.anthropic_base_url else ""
+            return f"Claude · {self.anthropic_model}{via}"
         if self.proveedor in ("auto", "ollama"):
             nombres = self.modelos_ollama()
             if nombres:
@@ -170,26 +178,23 @@ class IA:
                     return f"Ollama · {m}"
             if self.proveedor == "ollama":
                 return "Ollama (sin conexión)" if nombres is None else "Ollama (sin modelos)"
-        if self._hay_anthropic() and self.proveedor in ("auto", "anthropic"):
-            via = " (OmniRoute)" if self.anthropic_base_url else ""
-            return f"Claude · {self.anthropic_model}{via}"
         return "Sin IA configurada"
 
     # ------------------------------------------------------------------ punto de entrada
     def responder(self, history, on_texto=None):
         """Genera la respuesta (ejecutando herramientas si hace falta). Modifica history.
         on_texto(trozo) recibe el texto a medida que se genera (para empezar a hablar antes)."""
-        orden = {"ollama": ["ollama"], "anthropic": ["anthropic"]}.get(self.proveedor, ["ollama", "anthropic"])
+        orden = self._orden()
         errores = []
         for prov in orden:
             n_antes = len(history)
             try:
                 if prov == "ollama":
                     texto = self._ollama(history, on_texto)
+                elif prov == "anthropic_gratis":
+                    texto = self._anthropic(history, on_texto, modelo=self.modelo_respaldo_nube)
                 else:
-                    texto = self._anthropic(history)
-                    if on_texto and texto:
-                        on_texto(texto)
+                    texto = self._anthropic(history, on_texto)
                 self.activo = prov
                 return texto
             except IAError as e:
@@ -205,6 +210,13 @@ class IA:
         if len(errores) > 1:
             principal = IAError(principal.hablado, " | ".join(e.detalle for e in errores))
         raise principal
+
+    def _orden(self):
+        """Proveedores a probar, en orden: la nube primero y Ollama solo de respaldo."""
+        if self.proveedor == "ollama" or not self._hay_anthropic():
+            return ["ollama"]
+        nube = ["anthropic"] + (["anthropic_gratis"] if self.anthropic_base_url and self.modelo_respaldo_nube else [])
+        return nube if self.proveedor == "anthropic" else nube + ["ollama"]
 
     # ------------------------------------------------------------------ Ollama
     def _con_contexto(self, msgs):
@@ -347,6 +359,19 @@ class IA:
                 return directa
         return "He hecho varias consultas pero no he llegado a una respuesta clara."
 
+    def mantener_despierto(self):
+        """Si la nube lleva INACTIVIDAD segundos sin usarse, le manda una peticion minima (1 token) para que
+        la siguiente respuesta no tarde de mas. Devuelve True si la ha mandado."""
+        if self._orden()[0] != "anthropic" or time.time() - self._ultimo_uso < INACTIVIDAD:
+            return False
+        self._ultimo_uso = time.time()
+        try:
+            self._cliente().messages.create(model=self.anthropic_model, max_tokens=1,
+                                            messages=[{"role": "user", "content": "hola"}])
+        except Exception:
+            return False
+        return True
+
     def velocidad(self):
         """Tokens por segundo de la ultima respuesta de Ollama (None si no hay datos)."""
         n, dur = self.stats.get("eval_count"), self.stats.get("eval_duration")
@@ -355,8 +380,15 @@ class IA:
     def precalentar(self):
         """Carga el modelo en la grafica al arrancar y comprueba si cabe entero.
         Devuelve un texto para mostrar, o None."""
-        if self.proveedor == "anthropic":
-            return None
+        if self._orden()[0] == "anthropic":
+            t = time.time()
+            try:      # abre la conexion con la nube para que la primera respuesta no tarde de mas
+                self._cliente().messages.create(model=self.anthropic_model, max_tokens=1,
+                                                messages=[{"role": "user", "content": "hola"}])
+            except Exception as e:
+                return f"No he podido conectar con Claude al arrancar: {str(e)[:120]}"
+            self._ultimo_uso = time.time()
+            return f"Claude listo ({time.time() - t:.1f} s)."
         nombres = self.modelos_ollama(forzar=True)
         if not nombres:
             return None
@@ -411,15 +443,34 @@ class IA:
                 self._cliente_anthropic = anthropic.Anthropic(api_key=self.anthropic_key)
         return self._cliente_anthropic
 
-    def _anthropic(self, history):
+    def _anthropic(self, history, on_texto=None, modelo=None):
         if not self._hay_anthropic():
             raise IAError("No tengo clave de Anthropic.",
                           "Falta ANTHROPIC_API_KEY en el archivo .env (o usa Ollama).")
+        from anthropic import Timeout
+        modelo = modelo or self.anthropic_model
+        self.ultimo_modelo = modelo
+        dicho = [False]
+
+        def decir(t):
+            dicho[0] = True
+            on_texto(t)
         for _ in range(MAX_VUELTAS):
+            emitido, acumulado = "", ""
             try:
-                resp = self._cliente().messages.create(
-                    model=self.anthropic_model, max_tokens=800, system=self.system_fn(),
-                    tools=self.tools, messages=self._con_contexto(self._a_anthropic(history)))
+                with self._cliente().messages.stream(
+                        model=modelo, max_tokens=800, system=self.system_fn(), tools=self.tools,
+                        messages=self._con_contexto(self._a_anthropic(history)),
+                        timeout=Timeout(30.0, connect=ESPERA_PRIMER_TOKEN, read=ESPERA_PRIMER_TOKEN)) as st:
+                    for trozo in st.text_stream:
+                        acumulado += trozo
+                        if on_texto:
+                            limpio = _limpiar_parcial(acumulado)
+                            if len(limpio) > len(emitido) and limpio.startswith(emitido):
+                                decir(limpio[len(emitido):])
+                                emitido = limpio
+                    resp = st.get_final_message()
+                self._ultimo_uso = time.time()
             except Exception as e:
                 txt = str(e)
                 if "credit balance" in txt:
@@ -428,18 +479,30 @@ class IA:
                                   "Añade saldo en console.anthropic.com o usa Ollama.")
                 if "401" in txt or "authentication" in txt.lower():
                     raise IAError("La clave de Anthropic no es válida.", "ANTHROPIC_API_KEY no es válida.")
-                raise IAError("No he podido conectar con Claude.", f"Error de Anthropic: {txt[:200]}")
+                raise IAError("No he podido conectar con Claude.", f"Error de Claude ({modelo}): {txt[:200]}")
             texto = "".join(b.text for b in resp.content if b.type == "text").strip()
             usos = [b for b in resp.content if b.type == "tool_use"]
             if resp.stop_reason != "tool_use" or not usos:
+                if on_texto and texto and not emitido:
+                    decir(texto)
                 history.append({"role": "assistant", "content": texto})
                 return texto
             calls = [{"id": b.id, "name": b.name, "args": dict(b.input)} for b in usos]
             history.append({"role": "assistant", "content": texto, "tool_calls": calls})
+            if on_texto and not dicho[0] and any(c["name"] in CONSULTAS for c in calls):
+                decir(ESPERAS[int(time.time()) % len(ESPERAS)])     # que no haya silencio mientras busca
+            resultados = []
             for c in calls:
                 print(f"[herramienta] {c['name']} {c['args']}")
-                history.append({"role": "tool", "id": c["id"], "name": c["name"],
-                                "content": self.run_tool(c["name"], c["args"])})
+                res = self.run_tool(c["name"], c["args"])
+                resultados.append(res)
+                history.append({"role": "tool", "id": c["id"], "name": c["name"], "content": res})
+            directa = confirmacion_directa(calls, resultados) if RESPUESTA_RAPIDA else None
+            if directa:
+                if on_texto:
+                    decir(directa)
+                history.append({"role": "assistant", "content": directa})
+                return directa
         return "He hecho varias consultas pero no he llegado a una respuesta clara."
 
     @staticmethod

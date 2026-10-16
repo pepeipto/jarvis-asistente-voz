@@ -2,7 +2,8 @@
 
 Asistente de voz con memoria a largo plazo e interfaz 3D, funcionando en tu PC.
 
-    Tu voz -> ElevenLabs (te entiende mientras hablas) -> IA local Ollama (qwen3.8:27b en tu RTX 4090)
+    Tu voz -> ElevenLabs (te entiende mientras hablas) -> Claude Haiku en la nube, a traves de OmniRoute
+           (si falla: modelo gratuito de OmniRoute; sin internet: Ollama granite4.1:8b en tu PC)
            -> ElevenLabs (voz "Jarvis", modelo flash) -> altavoces
     Lo que recuerda se guarda en cerebro\ como notas de texto (compatibles con Obsidian).
 
@@ -23,8 +24,21 @@ Ejemplos:
 - "Jarvis, que he apuntado esta semana?"
 - "Jarvis, abre la calculadora." / "Jarvis, busca en Google recetas de lentejas."
 - "Jarvis, procesa la bandeja."  (tras dejar PDF o Word en cerebro\inbox)
+- "Jarvis, abre Excel." / "Jarvis, abre la carpeta de descargas."  (cualquier programa del menu Inicio)
+- "Jarvis, busca el archivo del presupuesto y leemelo."  (solo en tus carpetas: Escritorio, Documentos,
+  Descargas, Imagenes, Musica, Videos y OneDrive; se cambian con CARPETAS_PERMITIDAS en ajustes.env)
+- "Jarvis, busca en internet que tiempo hara mañana."
+- "Jarvis, encarga una tarea: ordena los PDF de descargas en carpetas por año."  Jarvis te repite la
+  tarea y espera a que digas "si" o "adelante". La hace Claude Code en segundo plano (por defecto en
+  Documentos\Jarvis\tareas) y te avisa al terminar. "Jarvis, como va la tarea?" / "cancela la tarea".
 
-## Velocidad medida en este PC (16/10/2026)
+## Velocidad con Claude en la nube (v1.5, 16/10/2026)
+Tiempo hasta la primera palabra de la respuesta, 10 frases reales: **0,93 s de media** (0,74 s el mejor
+caso, 1,41 s el peor). Al arrancar, Jarvis abre la conexion con la nube (unos 5 s, en segundo plano).
+Tras 4 minutos sin usarse, la primera respuesta tardaba 3,3 s: por eso Jarvis manda un aviso minimo
+(1 token) a la nube cuando lleva 4 minutos parado, y asi responde siempre rapido.
+
+## Velocidad medida en este PC con Ollama (16/10/2026, v1.4)
 Tiempo desde que te callas hasta que Jarvis empieza a hablar: **1,5 s de media** (0,9 s el mejor caso).
 Al empezar la noche era 3,2 s. Lo que lo consigue:
 - Transcripcion en vivo (tu voz se envia mientras hablas): 0,2 s en vez de 0,5-1,3 s.
@@ -48,8 +62,14 @@ Al empezar la noche era 3,2 s. Lo que lo consigue:
 
 `jarvis_log.txt` guarda el tiempo de cada respuesta.
 
+## Requisitos de la v1.5
+- OmniRoute abierto en tu PC (http://localhost:20128) con `ANTHROPIC_BASE_URL` y `ANTHROPIC_AUTH_TOKEN`
+  en `.env`. Modelo: `CLAUDE_MODEL=cc/claude-haiku-5-5`.
+- Para encargar tareas: Claude Code (`npm install -g @anthropic-ai/claude-code`). `diagnostico.bat` lo comprueba.
+- Pruebas rapidas sin voz: `venv\Scripts\python.exe -m unittest pruebas_unidad -v`
+
 ## Ajustes
-- `.env`: tus claves (ElevenLabs, Anthropic). No lo compartas.
+- `.env`: tus claves (ElevenLabs, Anthropic, token de OmniRoute). No lo compartas.
 - `ajustes.env`: ajustes sin claves. Ahora: `OLLAMA_MODEL=qwen3.8:27b`, `TTS_MODEL=eleven_flash_v2_5`.
   Otras opciones: `STT_VIVO=0` (transcripcion clasica), `LLM_PROVEEDOR=anthropic` (usar Claude,
   necesita saldo de API), `INTERFAZ=clasica` (ventana simple), `WAKE_WORD=...`,
@@ -72,7 +92,10 @@ automaticas; puedes borrar esa carpeta.)
 
 ## Carpetas
     jarvis.py        Programa principal (voz, ventana, herramientas)
-    llm.py           IA: Ollama y Claude, herramientas, correccion de respuestas
+    llm.py           IA: Claude (nube) y Ollama, herramientas, respaldos, correccion de respuestas
+    pc.py            Abrir programas y carpetas; buscar, listar y leer archivos (solo carpetas permitidas)
+    web.py           Busqueda en internet (DuckDuckGo)
+    tareas.py        Encargar tareas grandes a Claude Code, con confirmacion por voz
     memoria.py       Segundo cerebro (guardar, buscar, importar documentos)
     interfaz_web.py  Servidor local de la ventana 3D (solo accesible desde tu PC, con clave)
     ui\              Ventana 3D (Three.js)

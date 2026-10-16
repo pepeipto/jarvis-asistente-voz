@@ -98,6 +98,7 @@ echo ==============================================
 "%VPY%" -c "import anthropic, numpy, requests, dotenv, pypdf, docx; print('Escritura y cerebro ... OK')" 2>>"%LOG%" || echo Escritura y cerebro ... FALLA
 "%VPY%" -c "import sounddevice, numpy; print('Voz y microfono ....... OK')" 2>>"%LOG%" || echo Voz y microfono ....... FALLA
 where ollama >nul 2>&1 && echo IA local Ollama ........ OK || echo IA local Ollama ........ NO INSTALADA
+if exist "%APPDATA%\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe" (echo Claude Code (tareas) ... OK) else (echo Claude Code (tareas) ... NO INSTALADO: npm install -g @anthropic-ai/claude-code)
 echo.
 echo Siguiente paso: abre el archivo .env con el Bloc de notas y pon tus claves.
 echo Despues haz doble clic en jarvis.bat
