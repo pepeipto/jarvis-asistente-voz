@@ -16,3 +16,6 @@ __pycache__/
 diagnostico.txt
 modelos.txt
 prueba_auto.txt
+
+# Grabaciones de clase (privadas)
+clases/
