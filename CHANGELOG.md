@@ -10,6 +10,37 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.4.0] - 16/10/2026 - Autorreparación y registro de errores
+Aprobadas: P1, P2 y P6.
+
+**P1 - Autorreparación continua**
+- *Voz:* si se cae, Jarvis lo anota, avisa y la levanta solo. Espera 5, 10, 20... hasta 60 s entre
+  intentos y vuelve a 5 s tras 5 minutos estable. Saluda solo la primera vez. Mientras tanto se puede escribir.
+  Si el problema es de configuración (falta una clave o una librería) no reintenta en bucle: lo dice.
+- *Micrófono vigilado mientras funciona:* si deja de enviar audio (desconectado) o lleva 3 minutos
+  en silencio absoluto (silenciado), Jarvis busca otro micrófono y sigue.
+- *Ollama:* si está cerrado, Jarvis lo abre solo (un intento por minuto). Si sigue fallando, pasa a
+  Claude (si hay clave y saldo). Ambas cosas quedan anotadas.
+- *Google:* cada 30 minutos comprueba y renueva el permiso. Si se pierde, lo dice una vez por voz
+  ("ejecute conectar Google"). Si vuelve, lo anota.
+
+**P2 - Registro de errores** (`registro.py` → `errores_log.txt`)
+- Cada fallo queda anotado con fecha, origen (voz, micrófono, ia, google, herramienta, altavoces,
+  interfaz...), qué pasó y qué hizo Jarvis para arreglarlo. Se anotan también los errores no previstos
+  y los de los hilos internos.
+- No guarda lo que dices, ni correos ni notas. Se rota solo al pasar de 1 MB (`errores_log.anterior.txt`).
+
+**P6 - Control de versiones con git**
+- Repositorio local en `E:\jarvis` con una etiqueta por versión (`v1.3.1`, `v1.4.0`...).
+- Fuera del repositorio: `.env`, `google\` (claves), `cerebro\` (tus notas), `venv\` y registros.
+- Volver a una versión anterior: `git checkout v1.3.1` (y `git checkout main` para volver a la última).
+
+**Comprobado:** 15 pruebas con fallos forzados (voz caída 3 veces, micrófono desconectado y mudo,
+configuración rota, Google perdido y recuperado, Ollama cerrado, error en un hilo, rotación del
+registro). Jarvis real en modo texto con Ollama y Google responde bien. Las pruebas de Google
+de la 1.3.0 siguen pasando.
+**Sin comprobar todavía:** una caída real de la voz con el micrófono y los altavoces (necesita la ventana abierta).
+
 ## [1.3.1] - 16/10/2026 - Autorreparación del micrófono
 **Problema:** Jarvis dejó de responder por voz. El micrófono predeterminado de Windows (cámara OBSBOT
 Tiny 2 Lite) entregaba silencio absoluto (nivel 0,0000; esta mañana medía 0,0007 de ruido normal).
@@ -59,16 +90,7 @@ conexión real: Calendario, Gmail y Drive OK (16/10/2026 16:24).
 Propuestas ordenadas por impacto. Di cuáles apruebas (por ejemplo "apruebo P1, P2 y P4") y se
 implementan, se prueban y se anotan aquí como nueva versión.
 
-**P1. Autorreparación continua (vigilante)** - *muy recomendada*
-Ahora, si el bucle de voz falla una vez, la voz queda apagada hasta reiniciar Jarvis. Propuesta:
-- Reintentar la voz automáticamente.
-- Vigilar el micrófono también mientras funciona (si se queda mudo, cambiar a otro).
-- Si Ollama no responde, pasar a Claude (si hay saldo) y volver después.
-- Avisar por voz cuando caduque el permiso de Google.
-
-**P2. Registro de errores** - *muy recomendada*
-Hoy los errores solo salen en la consola y se pierden. Por eso no se podía saber por qué no respondía.
-Propuesta: `errores_log.txt` con fecha, qué falló y qué hizo Jarvis para arreglarlo.
+*(P1, P2 y P6 aprobadas e implementadas en la 1.4.0.)*
 
 **P3. "Jarvis, ¿estás bien?" / autodiagnóstico por voz**
 Que ejecute el diagnóstico y te diga en una frase qué falla y cómo lo ha arreglado o qué debes hacer tú.
@@ -80,10 +102,6 @@ día y correos importantes) cuando lo pidas o a una hora fija.
 **P5. Memoria más inteligente**
 Ahora el cerebro busca por palabras exactas. Con búsqueda por significado (modelo de embeddings local
 en Ollama), "¿qué ideas tenía para YouTube?" encontraría la nota "canal de IA para principiantes".
-
-**P6. Control de versiones con git**
-Guardar cada versión para poder volver atrás en un segundo si un cambio sale mal.
-Cada versión de este registro quedaría asociada a un punto de restauración.
 
 **P7. Prueba automática antes de cada versión**
 Ampliar `prueba_auto.bat` para que pruebe también Google (simulado), el micrófono y la voz, y

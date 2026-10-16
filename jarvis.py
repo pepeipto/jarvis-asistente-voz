@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 import google_conector
 import llm
 import memoria
+import registro
 
 for _flujo in (sys.stdout, sys.stderr):      # evita errores con acentos en la consola de Windows
     try:
@@ -204,6 +205,7 @@ def run_tool(name, args):
     try:
         return str(_run_tool(name, args))
     except Exception as e:
+        registro.error("herramienta", f"{name}: {e}", "la IA recibe el error y lo explica", exc=e)
         return f"Error en {name}: {e}"
 
 
@@ -303,11 +305,37 @@ def elegir_microfono():
     return None
 
 
+MIC_SILENCIO_MAX = 180       # segundos sin ninguna senal (silencio digital) = microfono mudo
+_ULTIMO_SONIDO = 0.0
+
+
+class MicrofonoMudo(Exception):
+    """El microfono dejo de enviar audio o solo envia silencio absoluto: hay que buscar otro."""
+
+
+class VozNoConfigurada(RuntimeError):
+    """Falta algo que reintentar no arregla (una clave, una libreria): no se reintenta."""
+
+
+def _bloque(q):
+    """Siguiente trozo de audio del microfono, vigilando que siga vivo."""
+    global _ULTIMO_SONIDO
+    try:
+        b = q.get(timeout=5)
+    except queue.Empty:
+        raise MicrofonoMudo("el microfono dejo de enviar audio (¿desconectado?)")
+    if np.abs(b).max() >= MIC_MUDO * 32768:
+        _ULTIMO_SONIDO = time.time()
+    elif time.time() - _ULTIMO_SONIDO > MIC_SILENCIO_MAX:
+        raise MicrofonoMudo(f"el microfono lleva {MIC_SILENCIO_MAX} s sin captar nada (¿silenciado?)")
+    return b
+
+
 def calibrate(stream_q, seconds=1.0):
     levels = []
     t0 = time.time()
     while time.time() - t0 < seconds:
-        levels.append(rms(stream_q.get()))
+        levels.append(rms(_bloque(stream_q)))
     return max(0.01, float(np.mean(levels)) * 3.0)
 
 
@@ -324,7 +352,7 @@ def listen(q, threshold, timeout=None, vivo=False):
     while True:  # esperar inicio de voz
         if timeout and time.time() - t_wait > timeout:
             return None, None
-        b = q.get()
+        b = _bloque(q)
         if time.time() < _MUTE_HASTA:      # Jarvis esta hablando: no escuchar
             pre = []
             continue
@@ -346,7 +374,7 @@ def listen(q, threshold, timeout=None, vivo=False):
     silent = 0.0
     t0 = time.time()
     while time.time() - t0 < MAX_PHRASE:
-        b = q.get()
+        b = _bloque(q)
         frames.append(b)
         if tv:
             tv.enviar(b)
@@ -585,6 +613,7 @@ class Habla:
                         self.audio.put(data[:n])
                     resto = data[n:]
             except Exception as e:
+                registro.error("voz", f"ElevenLabs no genero el audio: {e}", "respuesta solo en texto", exc=e)
                 print(f"[Error ElevenLabs: {e}]")
                 ui.log("sistema", f"Error de voz (ElevenLabs): {e}")
         self.audio.put(None)
@@ -615,6 +644,7 @@ class Habla:
                     ui.set_nivel(min(1.0, float(np.sqrt(np.mean(muestras ** 2))) / 0.12))
                     out.write(data)
         except Exception as e:
+            registro.error("altavoces", f"no se pudo reproducir: {e}", "respuesta solo en texto", exc=e)
             print(f"[Error de altavoces: {e}]")
             ui.log("sistema", f"Error al reproducir el audio: {e}")
             while self.audio.get() is not None:     # vaciar para no bloquear al otro hilo
@@ -690,10 +720,12 @@ def responder(history, query, on_texto=None):
     try:
         return ia.responder(history, on_texto)
     except llm.IAError as e:
+        registro.error("ia", e.detalle, "se avisa al usuario")
         print(f"[IA] {e.detalle}")
         ui.log("sistema", e.detalle)
         return e.hablado
     except Exception as e:
+        registro.error("ia", f"fallo inesperado: {e}", "se avisa al usuario", exc=e)
         print(f"[Error de IA: {e}]")
         ui.log("sistema", f"Error de IA: {e}")
         return "He tenido un problema al conectar con mi cerebro."
@@ -733,75 +765,143 @@ def bucle_escritura(history):
 
 
 def trabajo_voz(history):
-    """Bucle de voz: escucha, transcribe y responde. Si falla, avisa y deja el modo texto."""
+    """Vigilante de la voz: si la sesion de voz falla, lo anota, avisa y la vuelve a levantar sola
+    (esperando cada vez un poco mas, hasta 1 minuto). Mientras tanto se puede seguir escribiendo."""
     global ESTADO_BASE
+    fallos, primera = 0, True
+    while True:
+        inicio = time.time()
+        espera = 2
+        try:
+            if _sesion_voz(history, saludar=primera) == "salir":
+                return
+        except VozNoConfigurada as e:
+            ESTADO_BASE = "error"
+            ui.set_estado("error")
+            registro.error("voz", str(e), "sin reintentos: hay que corregir la configuracion")
+            aviso(f"Voz no disponible: {e}. Puedes seguir escribiendo abajo.")
+            return
+        except MicrofonoMudo as e:
+            registro.error("microfono", str(e), "busco otro microfono")
+            aviso(f"Problema con el micrófono: {e}. Buscando otro...")
+        except Exception as e:
+            if time.time() - inicio > 300:
+                fallos = 0                      # llevaba un buen rato bien: empezar de cero
+            fallos += 1
+            espera = min(60, 5 * 2 ** (fallos - 1))
+            ESTADO_BASE = "error"
+            ui.set_estado("error")
+            registro.error("voz", f"la voz se cayo: {e}", f"reintento {fallos} en {espera} s", exc=e)
+            aviso(f"La voz ha fallado ({e}). Me recupero solo en {espera} s; mientras, puedes escribir abajo.")
+        primera = False
+        time.sleep(espera)
+
+
+def _sesion_voz(history, saludar=True):
+    """Una sesion de voz: escucha, transcribe y responde. Devuelve 'salir' si el usuario se despide."""
+    global ESTADO_BASE, _ULTIMO_SONIDO
     try:
         cargar_audio()
-        if STT_MODE == "local":
-            aviso("Cargando reconocimiento de voz local...")
-            whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-        else:
-            whisper = None
-            if not ELEVEN_KEY:
-                raise RuntimeError("falta ELEVENLABS_API_KEY en el archivo .env")
-        if not ELEVEN_KEY or not VOICE_ID:
-            aviso("Sin voz de ElevenLabs configurada: respondere solo con texto.")
+    except RuntimeError as e:
+        raise VozNoConfigurada(str(e))
+    if STT_MODE == "local":
+        aviso("Cargando reconocimiento de voz local...")
+        whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    else:
+        whisper = None
+        if not ELEVEN_KEY:
+            raise VozNoConfigurada("falta ELEVENLABS_API_KEY en el archivo .env")
+    if not ELEVEN_KEY or not VOICE_ID:
+        aviso("Sin voz de ElevenLabs configurada: respondere solo con texto.")
 
-        q = queue.Queue()
-        stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", device=elegir_microfono(),
-                                blocksize=CHUNK, callback=lambda d, f, t, s: q.put(d[:, 0].copy()))
-        with stream:
-            aviso("Calibrando el microfono, un segundo de silencio...")
-            threshold = calibrate(q)
+    q = queue.Queue()
+    stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16", device=elegir_microfono(),
+                            blocksize=CHUNK, callback=lambda d, f, t, s: q.put(d[:, 0].copy()))
+    with stream:
+        _ULTIMO_SONIDO = time.time()
+        aviso("Calibrando el microfono, un segundo de silencio...")
+        threshold = calibrate(q)
+        if ESTADO_BASE == "error":
+            ESTADO_BASE = "inactivo"
+            registro.info("voz", "recuperada")
+        if saludar:
             with lock_cerebro:
                 speak("Sistemas en línea. Su segundo cerebro está cargado. A su servicio.")
-            last_interaction = 0.0
             aviso(f"Di '{WAKE_WORD}' y tu peticion. O escribe abajo.")
-            while True:
-                ui.set_estado(ESTADO_BASE)
-                in_convo = time.time() - last_interaction < CONVERSATION_WINDOW
-                audio, tv = listen(q, threshold, timeout=CONVERSATION_WINDOW if in_convo else None,
-                                   vivo=STT_VIVO and whisper is None)
-                if audio is None:
+        else:
+            aviso("Voz recuperada. Ya te escucho otra vez.")
+        last_interaction = 0.0
+        while True:
+            ui.set_estado(ESTADO_BASE)
+            in_convo = time.time() - last_interaction < CONVERSATION_WINDOW
+            audio, tv = listen(q, threshold, timeout=CONVERSATION_WINDOW if in_convo else None,
+                               vivo=STT_VIVO and whisper is None)
+            if audio is None:
+                continue
+            if len(audio) < SAMPLE_RATE * 0.6:
+                if tv:
+                    tv.cancelar()
+                continue  # ruido muy corto, no merece transcripcion
+            ui.set_estado("pensando")
+            ui.set_nivel(0)
+            t_stt0 = time.time()
+            text = tv.terminar() if tv else None
+            if text is None:
+                try:
+                    text = transcribe(whisper, audio)
+                except Exception as e:
+                    registro.error("oido", f"no se pudo transcribir: {e}", "se ignora esa frase", exc=e)
+                    aviso(f"Error al transcribir: {e}")
                     continue
-                if len(audio) < SAMPLE_RATE * 0.6:
-                    if tv:
-                        tv.cancelar()
-                    continue  # ruido muy corto, no merece transcripcion
-                ui.set_estado("pensando")
-                ui.set_nivel(0)
-                t_stt0 = time.time()
-                text = tv.terminar() if tv else None
-                if text is None:
-                    try:
-                        text = transcribe(whisper, audio)
-                    except Exception as e:
-                        aviso(f"Error al transcribir: {e}")
-                        continue
-                text = re.sub(r"\([^)]*\)", "", text).strip()
-                if len(text) < 2:
-                    continue
-                woke, rest = strip_wake(text)
-                if not woke and not in_convo:
-                    continue  # ignorar conversaciones ajenas
-                if woke and not rest:
-                    with lock_cerebro:
-                        speak("Dígame.")
-                    last_interaction = time.time()
-                    continue
-                query = rest if woke else text
-                print(f"TU: {query}")
-                if re.search(r"\b(adiós|adios|apágate|apagate|hasta luego)\b", query.lower()):
-                    with lock_cerebro:
-                        speak("Hasta luego.")
-                    ui.cerrar()
-                    return
-                atender(history, query, t_stt=time.time() - t_stt0)
+            text = re.sub(r"\([^)]*\)", "", text).strip()
+            if len(text) < 2:
+                continue
+            woke, rest = strip_wake(text)
+            if not woke and not in_convo:
+                continue  # ignorar conversaciones ajenas
+            if woke and not rest:
+                with lock_cerebro:
+                    speak("Dígame.")
                 last_interaction = time.time()
-    except Exception as e:
-        ESTADO_BASE = "error"
-        ui.set_estado("error")
-        aviso(f"Voz no disponible: {e}. Puedes seguir escribiendo abajo.")
+                continue
+            query = rest if woke else text
+            print(f"TU: {query}")
+            if re.search(r"\b(adiós|adios|apágate|apagate|hasta luego)\b", query.lower()):
+                with lock_cerebro:
+                    speak("Hasta luego.")
+                ui.cerrar()
+                return "salir"
+            atender(history, query, t_stt=time.time() - t_stt0)
+            last_interaction = time.time()
+
+
+def vigilante_google(primera_espera=60, cada=1800):
+    """Cada 30 min comprueba que el permiso de Google sigue valido. Si se pierde (caduca en modo
+    Prueba, o lo revocas), lo anota y lo dice una vez; si vuelve, tambien lo anota."""
+    perdido = False
+    time.sleep(primera_espera)
+    while True:
+        if google_conector.estado() != "sin credenciales":
+            try:
+                google_conector._credenciales()        # renueva el permiso si hace falta
+                if perdido:
+                    registro.info("google", "acceso recuperado")
+                    aviso("Acceso a Google recuperado.")
+                perdido = False
+            except Exception as e:
+                texto = str(e)
+                caducado = isinstance(e, google_conector.NoConectado) or "invalid_grant" in texto
+                if caducado and not perdido:
+                    perdido = True
+                    registro.error("google", f"permiso perdido: {texto or type(e).__name__}",
+                                   "aviso al usuario para que ejecute conectar_google.bat")
+                    aviso("He perdido el acceso a Google. Ejecuta conectar_google.bat para renovarlo.")
+                    with lock_cerebro:
+                        speak("Aviso: he perdido el acceso a su cuenta de Google. "
+                              "Ejecute conectar Google para renovarlo.")
+                elif not caducado:
+                    registro.error("google", f"no se pudo comprobar el permiso: {texto}", "reintento en 30 min")
+        time.sleep(cada)
 
 
 def datos_ui():
@@ -822,23 +922,33 @@ def crear_ui():
             from interfaz_web import OrbeWeb
             return OrbeWeb(info=datos_ui)
         except Exception as e:
+            registro.error("interfaz", f"no abre la ventana 3D: {e}", "pruebo la ventana clasica", exc=e)
             print(f"[Aviso] No se pudo abrir la interfaz 3D ({e}). Pruebo la ventana clasica.")
     try:
         from interfaz import Orbe
         return Orbe()
     except Exception as e:
+        registro.error("interfaz", f"no abre la ventana clasica: {e}", "sigo en modo consola", exc=e)
         print(f"[Aviso] Tampoco se puede abrir la ventana clasica ({e}). Sigo en modo consola.")
         return None
 
 
 def crear_ia():
-    return llm.IA(TOOLS, system_prompt, run_tool, anthropic_key=ANTHROPIC_KEY, anthropic_model=MODEL,
-                  proveedor=_env("LLM_PROVEEDOR", "auto") or "auto", ollama_model=_env("OLLAMA_MODEL"),
-                  contexto_fn=contexto)
+    nueva = llm.IA(TOOLS, system_prompt, run_tool, anthropic_key=ANTHROPIC_KEY, anthropic_model=MODEL,
+                   proveedor=_env("LLM_PROVEEDOR", "auto") or "auto", ollama_model=_env("OLLAMA_MODEL"),
+                   contexto_fn=contexto)
+
+    def reparacion(origen, texto):
+        registro.error(origen, texto, "reparado automaticamente")
+        aviso(texto)
+    nueva.on_reparacion = reparacion
+    return nueva
 
 
 def main():
     global ui, ia
+    registro.instalar_capturas()
+    registro.info("inicio", "Jarvis arrancado" + (" (modo texto)" if "--texto" in sys.argv else ""))
     memoria.iniciar()
     print(f"Segundo cerebro en: {memoria.BASE}")
     if any(f.is_file() for f in memoria.INBOX.iterdir()):
@@ -866,7 +976,8 @@ def main():
             aviso(msg)
     threading.Thread(target=_precalentar, daemon=True).start()
     threading.Thread(target=bucle_escritura, args=(history,), daemon=True).start()
-    threading.Thread(target=trabajo_voz, args=(history,), daemon=True).start()
+    threading.Thread(target=trabajo_voz, args=(history,), daemon=True, name="voz").start()
+    threading.Thread(target=vigilante_google, daemon=True, name="vigilante_google").start()
     ui.run()
     os._exit(0)   # cierra tambien los hilos de audio
 
