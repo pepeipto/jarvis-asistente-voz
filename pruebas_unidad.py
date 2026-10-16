@@ -60,6 +60,7 @@ def _ia(cliente, proveedor="auto", run_tool=None):
     ia = llm.IA([], lambda: "sistema", run_tool or (lambda n, a: "ok"), proveedor=proveedor,
                 anthropic_model="cc/claude-haiku-5-5", anthropic_base_url="http://omniroute", anthropic_token="t")
     ia._cliente_anthropic = cliente
+    ia._proxy_responde = lambda: True
     ia._ollama = lambda h, on_texto=None: (_ for _ in ()).throw(AssertionError("no debia usar Ollama"))
     return ia
 
@@ -143,6 +144,37 @@ class CerebroNube(unittest.TestCase):
         ia.modelos_ollama = lambda forzar=False: (_ for _ in ()).throw(AssertionError("no debia mirar Ollama"))
         self.assertIn("Claude listo", ia.precalentar())
         self.assertEqual(c.llamadas[0]["max_tokens"], 1)
+
+    def test_omniroute_apagado_va_directo_a_ollama(self):
+        c = ClienteFalso({})                                  # cualquier llamada a la nube fallaria
+        ia = _ia(c)
+        ia._proxy_responde = lambda: False
+        ia._ollama = lambda h, on_texto=None: "local"
+        self.assertEqual(ia.responder([{"role": "user", "content": "hola"}]), "local")
+        self.assertEqual(c.llamadas, [])                      # sin esperar reintentos de la nube
+        self.assertFalse(ia.mantener_despierto())
+
+    def test_omniroute_apagado_precalienta_ollama(self):
+        ia = _ia(ClienteFalso({}))
+        ia._proxy_responde = lambda: False
+        ia.modelos_ollama = lambda forzar=False: []
+        self.assertIsNone(ia.precalentar())                   # mira Ollama en vez de la nube
+
+    def test_proxy_responde_comprueba_el_puerto(self):
+        import socket
+        import time
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen()
+        puerto = srv.getsockname()[1]
+        ia = llm.IA([], lambda: "s", lambda n, a: "ok", anthropic_base_url=f"http://127.0.0.1:{puerto}",
+                    anthropic_token="t")
+        self.assertTrue(ia._proxy_responde())
+        srv.close()
+        ia._proxy_estado = (0.0, True)                        # olvidar lo comprobado
+        t = time.time()
+        self.assertFalse(ia._proxy_responde())
+        self.assertLess(time.time() - t, 1.5)
 
 
 class ManosPC(unittest.TestCase):
