@@ -57,7 +57,10 @@ sin errores. Si falta `WHATSAPP_APP_SECRET`, no se arranca el receptor: sin firm
   libre (`POST /{PHONE_ID}/messages`, `type=text`).
 - Si no: la plantilla `aviso_jarvis` (categoría utilidad, español, cuerpo `Jarvis: {{1}}`) con el
   texto como parámetro.
-- Si Meta rechaza el texto libre por estar fuera de la ventana, se reintenta con la plantilla.
+- Si Meta rechaza el texto libre por estar fuera de la ventana, se reintenta con la plantilla. Meta
+  acepta el envío y avisa del fallo después por el webhook (estado `failed`, error 131047), así que
+  se recuerdan los últimos 50 envíos (id → texto) y el receptor reenvía con plantilla al ver ese
+  estado.
 - El momento de tu último mensaje se guarda en `whatsapp_estado.json` para que la ventana de 24 h
   sobreviva a un reinicio.
 - Textos de más de 4096 caracteres se parten en varios mensajes. El `**negrita**` de la IA se pasa a
@@ -72,7 +75,7 @@ sin errores. Si falta `WHATSAPP_APP_SECRET`, no se arranca el receptor: sin firm
   1. Comprueba la cabecera `X-Hub-Signature-256` (HMAC-SHA256 del cuerpo exacto con
      `WHATSAPP_APP_SECRET`, comparado en tiempo constante). Si no cuadra, 403 y se anota.
   2. Responde 200 al momento y procesa en un hilo aparte (Meta reintenta si tardas).
-  3. Ignora los avisos de estado (entregado, leído) y los mensajes repetidos (por id, se recuerdan
+  3. Ignora los avisos de estado (entregado, leído), salvo `failed` con error 131047 (ver «Enviar»), y los mensajes repetidos (por id, se recuerdan
      los últimos 200).
   4. Si el remitente no es `WHATSAPP_MI_NUMERO`: se descarta sin responder y se anota solo el hecho,
      sin el contenido.
