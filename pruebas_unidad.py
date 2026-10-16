@@ -209,5 +209,47 @@ class ManosPC(unittest.TestCase):
         self.assertIsNone(self.pc.ejecutar("hora_actual", {}))
 
 
+HTML_DDG = """
+<div class="result results_links"><h2 class="result__title">
+<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.aemet.es%2Fmadrid&amp;rut=x">El Tiempo: <b>Madrid</b></a></h2>
+<a class="result__snippet" href="x">Predicción para <b>mañana</b>: 23 &#176;C y lluvia.</a></div>
+<div class="result results_links"><h2 class="result__title">
+<a rel="nofollow" class="result__a" href="https://www.tiempo.com/madrid">Tiempo en Madrid</a></h2>
+<a class="result__snippet" href="y">Máxima 22, mínima 11.</a></div>
+"""
+
+
+class BusquedaWeb(unittest.TestCase):
+    def test_analiza_resultados(self):
+        import web
+        r = web._analizar(HTML_DDG)
+        self.assertEqual(len(r), 2)
+        self.assertEqual(r[0]["url"], "https://www.aemet.es/madrid")       # enlace de redireccion resuelto
+        self.assertEqual(r[0]["titulo"], "El Tiempo: Madrid")
+        self.assertIn("23 °C", r[0]["fragmento"])
+
+    def test_formato_resultados(self):
+        import web
+        web.buscar, antes = (lambda c, maximo=5: web._analizar(HTML_DDG)), web.buscar
+        try:
+            t = web.ejecutar("buscar_web", {"consulta": "tiempo madrid"})
+        finally:
+            web.buscar = antes
+        self.assertIn("El Tiempo: Madrid", t)
+        self.assertIn("https://www.tiempo.com/madrid", t)
+
+    def test_sin_resultados(self):
+        import web
+        web.buscar, antes = (lambda c, maximo=5: []), web.buscar
+        try:
+            self.assertIn("No he encontrado nada", web.ejecutar("buscar_web", {"consulta": "zzz"}))
+        finally:
+            web.buscar = antes
+
+    def test_herramienta_ajena(self):
+        import web
+        self.assertIsNone(web.ejecutar("hora_actual", {}))
+
+
 if __name__ == "__main__":
     unittest.main()
