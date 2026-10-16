@@ -203,6 +203,7 @@ def run_tool(name, args):
     try:
         r = str(_run_tool(name, args))
         if name in NO_FIABLES:
+            r = re.sub(r"<\s*/?\s*contenido_no_fiable", "[marca eliminada]", r, flags=re.I)   # no puede cerrar la marca
             return f'<contenido_no_fiable origen="{NO_FIABLES[name]}">\n{r}\n</contenido_no_fiable>'
         return r
     except Exception as e:
