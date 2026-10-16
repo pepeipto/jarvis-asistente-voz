@@ -267,8 +267,9 @@ def indexar_programas():
     try:
         import json
         r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
                             "Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress"],
-                           capture_output=True, text=True, timeout=30,
+                           capture_output=True, encoding="utf-8", errors="replace", timeout=30,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         apps = json.loads(r.stdout or "[]")
         for a in apps if isinstance(apps, list) else [apps]:
