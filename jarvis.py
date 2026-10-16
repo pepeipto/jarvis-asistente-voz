@@ -936,8 +936,12 @@ def crear_ui():
 
 
 def crear_ia():
+    proveedor = (_env("LLM_PROVEEDOR", "auto") or "auto").lower()
+    hay_nube = bool((ANTHROPIC_BASE_URL and ANTHROPIC_TOKEN) or ANTHROPIC_KEY) and proveedor != "ollama"
+    # con la nube, Ollama solo es el respaldo sin conexion: un modelo ligero que carga en pocos segundos
+    ollama_model = (_env("OLLAMA_MODEL_RESPALDO", "granite4.1:8b") if hay_nube else "") or _env("OLLAMA_MODEL")
     nueva = llm.IA(TOOLS, system_prompt, run_tool, anthropic_key=ANTHROPIC_KEY, anthropic_model=MODEL,
-                   proveedor=_env("LLM_PROVEEDOR", "auto") or "auto", ollama_model=_env("OLLAMA_MODEL"),
+                   proveedor=proveedor, ollama_model=ollama_model,
                    contexto_fn=contexto, anthropic_base_url=ANTHROPIC_BASE_URL,
                    anthropic_token=ANTHROPIC_TOKEN)
 
