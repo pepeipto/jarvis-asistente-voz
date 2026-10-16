@@ -997,6 +997,12 @@ def main():
         if msg:
             aviso(msg)
     threading.Thread(target=_precalentar, daemon=True).start()
+
+    def _despierto():
+        while True:
+            time.sleep(60)
+            ia.mantener_despierto()
+    threading.Thread(target=_despierto, daemon=True, name="nube_despierta").start()
     threading.Thread(target=bucle_escritura, args=(history,), daemon=True).start()
     threading.Thread(target=trabajo_voz, args=(history,), daemon=True, name="voz").start()
     threading.Thread(target=vigilante_google, daemon=True, name="vigilante_google").start()

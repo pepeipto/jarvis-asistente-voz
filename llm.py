@@ -32,7 +32,8 @@ AVISO_SIN_HERRAMIENTA = ("[Aviso del sistema] En esta respuesta no has llamado a
                          "llama ahora a la herramienta adecuada. Si no hacia falta ninguna, responde de nuevo sin afirmar "
                          "que has guardado o encontrado algo.")
 CTX = int(os.getenv("OLLAMA_CTX") or 0)
-ESPERA_PRIMER_TOKEN = 4.0    # segundos sin respuesta de la nube antes de pasar al modelo gratuito    # 0 = automatico (8192, o 6144 en modelos de 30B o mas)
+ESPERA_PRIMER_TOKEN = 4.0    # segundos sin respuesta de la nube antes de pasar al modelo gratuito
+INACTIVIDAD = 240            # tras 4 min sin usar la nube, la primera respuesta tarda ~3 s mas: aviso minimo    # 0 = automatico (8192, o 6144 en modelos de 30B o mas)
 
 
 RESPUESTA_RAPIDA = (os.getenv("RESPUESTA_RAPIDA") or "1") != "0"
@@ -133,6 +134,7 @@ class IA:
         self.corregidas = 0                    # veces que el modelo afirmo algo sin usar herramientas
         self._ultimo_arranque = 0.0            # ultima vez que se intento abrir Ollama
         self.on_reparacion = None              # funcion(origen, texto) para anotar autorreparaciones
+        self._ultimo_uso = 0.0                 # ultima vez que se hablo con la nube
 
     # ------------------------------------------------------------------ descubrimiento
     def modelos_ollama(self, forzar=False):
@@ -357,6 +359,19 @@ class IA:
                 return directa
         return "He hecho varias consultas pero no he llegado a una respuesta clara."
 
+    def mantener_despierto(self):
+        """Si la nube lleva INACTIVIDAD segundos sin usarse, le manda una peticion minima (1 token) para que
+        la siguiente respuesta no tarde de mas. Devuelve True si la ha mandado."""
+        if self._orden()[0] != "anthropic" or time.time() - self._ultimo_uso < INACTIVIDAD:
+            return False
+        self._ultimo_uso = time.time()
+        try:
+            self._cliente().messages.create(model=self.anthropic_model, max_tokens=1,
+                                            messages=[{"role": "user", "content": "hola"}])
+        except Exception:
+            return False
+        return True
+
     def velocidad(self):
         """Tokens por segundo de la ultima respuesta de Ollama (None si no hay datos)."""
         n, dur = self.stats.get("eval_count"), self.stats.get("eval_duration")
@@ -372,6 +387,7 @@ class IA:
                                                 messages=[{"role": "user", "content": "hola"}])
             except Exception as e:
                 return f"No he podido conectar con Claude al arrancar: {str(e)[:120]}"
+            self._ultimo_uso = time.time()
             return f"Claude listo ({time.time() - t:.1f} s)."
         nombres = self.modelos_ollama(forzar=True)
         if not nombres:
@@ -454,6 +470,7 @@ class IA:
                                 decir(limpio[len(emitido):])
                                 emitido = limpio
                     resp = st.get_final_message()
+                self._ultimo_uso = time.time()
             except Exception as e:
                 txt = str(e)
                 if "credit balance" in txt:

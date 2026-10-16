@@ -35,6 +35,8 @@ Ejemplos:
 ## Velocidad con Claude en la nube (v1.5, 16/10/2026)
 Tiempo hasta la primera palabra de la respuesta, 10 frases reales: **0,93 s de media** (0,74 s el mejor
 caso, 1,41 s el peor). Al arrancar, Jarvis abre la conexion con la nube (unos 5 s, en segundo plano).
+Tras 4 minutos sin usarse, la primera respuesta tardaba 3,3 s: por eso Jarvis manda un aviso minimo
+(1 token) a la nube cuando lleva 4 minutos parado, y asi responde siempre rapido.
 
 ## Velocidad medida en este PC con Ollama (16/10/2026, v1.4)
 Tiempo desde que te callas hasta que Jarvis empieza a hablar: **1,5 s de media** (0,9 s el mejor caso).

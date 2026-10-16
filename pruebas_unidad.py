@@ -117,6 +117,26 @@ class CerebroNube(unittest.TestCase):
         ia._ollama = lambda h, on_texto=None: "local"
         self.assertEqual(ia.responder([{"role": "user", "content": "hola"}]), "local")
 
+    def test_mantener_despierto_solo_si_inactivo(self):
+        import time
+        c = ClienteFalso({})
+        ia = _ia(c)
+        ia._ultimo_uso = time.time() - 30
+        self.assertFalse(ia.mantener_despierto())
+        self.assertEqual(c.llamadas, [])
+        ia._ultimo_uso = time.time() - 300
+        self.assertTrue(ia.mantener_despierto())
+        self.assertEqual(c.llamadas[0]["max_tokens"], 1)
+        self.assertFalse(ia.mantener_despierto())          # el aviso cuenta como uso
+
+    def test_respuesta_cuenta_como_uso(self):
+        import time
+        c = ClienteFalso({"cc/claude-haiku-5-5": [(["ok"], [_texto("ok")], "end_turn")]})
+        ia = _ia(c)
+        ia._ultimo_uso = 0.0
+        ia.responder([{"role": "user", "content": "hola"}])
+        self.assertGreater(ia._ultimo_uso, time.time() - 5)
+
     def test_precalentar_nube_no_toca_ollama(self):
         c = ClienteFalso({})
         ia = _ia(c)
