@@ -125,5 +125,89 @@ class CerebroNube(unittest.TestCase):
         self.assertEqual(c.llamadas[0]["max_tokens"], 1)
 
 
+class ManosPC(unittest.TestCase):
+    def setUp(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        import pc
+        self.pc, self.os = pc, os
+        self.tmp = Path(tempfile.mkdtemp(prefix="jarvis_prueba_")).resolve()
+        self._antes = os.environ.get("CARPETAS_PERMITIDAS")
+        os.environ["CARPETAS_PERMITIDAS"] = str(self.tmp)
+
+    def tearDown(self):
+        import shutil
+        if self._antes is None:
+            self.os.environ.pop("CARPETAS_PERMITIDAS", None)
+        else:
+            self.os.environ["CARPETAS_PERMITIDAS"] = self._antes
+        self.os.system(f'rmdir "{self.tmp / "enlace"}" 2>nul')
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_ruta_alias(self):
+        self.os.environ.pop("CARPETAS_PERMITIDAS")
+        r = self.pc.ruta_segura("descargas")
+        self.assertTrue(r.is_dir())
+        self.assertIn(r.name.lower(), ("downloads", "descargas"))
+        self.assertEqual(self.pc.ruta_segura("en la carpeta de Descargas"), r)
+
+    def test_ruta_fuera_rechazada(self):
+        (self.tmp / ".env").write_text("CLAVE=1")
+        for mala in (str(self.tmp / ".." / "x"), r"C:\Windows\win.ini", str(self.tmp / ".env")):
+            with self.assertRaises(PermissionError, msg=mala):
+                self.pc.ruta_segura(mala)
+
+    def test_junction_fuera_rechazada(self):
+        self.os.system(f'mklink /J "{self.tmp / "enlace"}" "C:\\Windows" >nul')
+        self.assertTrue((self.tmp / "enlace").exists())
+        with self.assertRaises(PermissionError):
+            self.pc.ruta_segura(str(self.tmp / "enlace" / "win.ini"))
+
+    def test_ruta_relativa_dentro_de_permitidas(self):
+        (self.tmp / "Proyectos").mkdir()
+        self.assertEqual(self.pc.ruta_segura("Proyectos"), self.tmp / "Proyectos")
+
+    def test_buscar_archivos(self):
+        (self.tmp / "clientes" / "2026").mkdir(parents=True)
+        (self.tmp / "clientes" / "2026" / "informe García.pdf").write_bytes(b"%PDF")
+        (self.tmp / "node_modules").mkdir()
+        (self.tmp / "node_modules" / "informe garcia.js").write_text("x")
+        r = self.pc.ejecutar("buscar_archivos", {"texto": "garcia"})
+        self.assertIn("informe García.pdf", r)
+        self.assertNotIn("node_modules", r)
+
+    def test_leer_txt_latin1_y_recorte(self):
+        f = self.tmp / "notas.txt"
+        f.write_bytes(("Año y canción. " * 1400).encode("latin-1"))
+        r = self.pc.ejecutar("leer_archivo", {"ruta": str(f)})
+        self.assertIn("Año y canción.", r)
+        self.assertIn("recortado", r)
+        self.assertLessEqual(len(r), 8200)
+
+    def test_leer_binario(self):
+        f = self.tmp / "datos.xlsx"
+        f.write_bytes(b"PK\x03\x04\x00\x00binario\x00\x01")
+        r = self.pc.ejecutar("leer_archivo", {"ruta": str(f)})
+        self.assertIn("No puedo leer ese tipo de archivo", r)
+
+    def test_listar_carpeta(self):
+        for i in range(60):
+            (self.tmp / f"f{i:02d}.txt").write_text("x")
+        r = self.pc.ejecutar("listar_carpeta", {"ruta": str(self.tmp)})
+        self.assertIn("f00.txt", r)
+        self.assertNotIn("f59.txt", r)
+        self.assertIn("60", r)                       # dice cuantos hay en total
+
+    def test_programa_normaliza(self):
+        indice = {"microsoft excel": "x.lnk", "word": "w.lnk"}
+        self.assertEqual(self.pc._buscar_programa("excél", indice), "x.lnk")
+        self.assertEqual(self.pc._buscar_programa("Excel", indice), "x.lnk")
+        self.assertIsNone(self.pc._buscar_programa("photoshop", indice))
+
+    def test_herramienta_ajena(self):
+        self.assertIsNone(self.pc.ejecutar("hora_actual", {}))
+
+
 if __name__ == "__main__":
     unittest.main()
