@@ -133,6 +133,7 @@ class IA:
         self.contexto_fn = contexto_fn         # texto (fecha/hora) que se añade al ultimo mensaje del usuario
         self.corregidas = 0                    # veces que el modelo afirmo algo sin usar herramientas
         self._ultimo_arranque = 0.0            # ultima vez que se intento abrir Ollama
+        self._proxy_estado = (0.0, True)       # (momento, responde) de la ultima comprobacion de OmniRoute
         self.on_reparacion = None              # funcion(origen, texto) para anotar autorreparaciones
         self._ultimo_uso = 0.0                 # ultima vez que se hablo con la nube
 
@@ -215,7 +216,9 @@ class IA:
         """Proveedores a probar, en orden: la nube primero y Ollama solo de respaldo."""
         if self.proveedor == "ollama" or not self._hay_anthropic():
             return ["ollama"]
-        nube = ["anthropic"] + (["anthropic_gratis"] if self.anthropic_base_url and self.modelo_respaldo_nube else [])
+        if self.proveedor == "auto" and self.anthropic_base_url and not self._proxy_responde():
+            return ["ollama"]           # OmniRoute apagado: no esperar ~25 s de reintentos en cada pregunta
+        nube =["anthropic"] + (["anthropic_gratis"] if self.anthropic_base_url and self.modelo_respaldo_nube else [])
         return nube if self.proveedor == "anthropic" else nube + ["ollama"]
 
     # ------------------------------------------------------------------ Ollama
@@ -431,6 +434,23 @@ class IA:
     # ------------------------------------------------------------------ Anthropic
     def _hay_anthropic(self):
         return bool(self.anthropic_token if self.anthropic_base_url else self.anthropic_key)
+
+    def _proxy_responde(self):
+        """True si el proxy (OmniRoute) acepta conexiones. Se comprueba en medio segundo y se recuerda 30 s."""
+        momento, ok = self._proxy_estado
+        if time.time() - momento < 30:
+            return ok
+        import socket
+        from urllib.parse import urlparse
+        u = urlparse(self.anthropic_base_url)
+        try:
+            with socket.create_connection((u.hostname or "localhost", u.port or (443 if u.scheme == "https" else 80)),
+                                          timeout=0.5):
+                ok = True
+        except OSError:
+            ok = False
+        self._proxy_estado = (time.time(), ok)
+        return ok
 
     def _cliente(self):
         if self._cliente_anthropic is None:
