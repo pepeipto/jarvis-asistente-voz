@@ -211,6 +211,8 @@ def leer_archivo(ruta):
         texto = _extraer_texto(p)
     else:
         datos = p.read_bytes()[:2_000_000]
+        if datos.startswith((b"\xff\xfe", b"\xfe\xff")):      # texto UTF-16 (Bloc de notas "Unicode", exportaciones)
+            datos = datos.decode("utf-16", errors="replace").encode("utf-8")
         if b"\x00" in datos[:4096]:
             return f"No puedo leer ese tipo de archivo ({ext or 'sin extension'}): es binario. Leo texto, PDF y Word."
         try:
