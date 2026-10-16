@@ -109,11 +109,14 @@ def _args(a):
 
 class IA:
     def __init__(self, tools, system_fn, run_tool, anthropic_key="", anthropic_model="claude-sonnet-5-5",
-                 proveedor="auto", ollama_model="", contexto_fn=None):
+                 proveedor="auto", ollama_model="", contexto_fn=None,
+                 anthropic_base_url="", anthropic_token=""):
         self.tools = tools                    # herramientas en formato Anthropic (input_schema)
         self.system_fn = system_fn
         self.run_tool = run_tool
         self.anthropic_key = anthropic_key
+        self.anthropic_base_url = anthropic_base_url   # p. ej. OmniRoute (http://localhost:20128)
+        self.anthropic_token = anthropic_token         # token Bearer del proxy
         self.anthropic_model = anthropic_model
         self.proveedor = (proveedor or "auto").lower()
         self.ollama_model_pref = ollama_model
@@ -167,8 +170,9 @@ class IA:
                     return f"Ollama · {m}"
             if self.proveedor == "ollama":
                 return "Ollama (sin conexión)" if nombres is None else "Ollama (sin modelos)"
-        if self.anthropic_key and self.proveedor in ("auto", "anthropic"):
-            return f"Claude · {self.anthropic_model}"
+        if self._hay_anthropic() and self.proveedor in ("auto", "anthropic"):
+            via = " (OmniRoute)" if self.anthropic_base_url else ""
+            return f"Claude · {self.anthropic_model}{via}"
         return "Sin IA configurada"
 
     # ------------------------------------------------------------------ punto de entrada
@@ -393,14 +397,22 @@ class IA:
         return out
 
     # ------------------------------------------------------------------ Anthropic
+    def _hay_anthropic(self):
+        return bool(self.anthropic_token if self.anthropic_base_url else self.anthropic_key)
+
     def _cliente(self):
         if self._cliente_anthropic is None:
             import anthropic
-            self._cliente_anthropic = anthropic.Anthropic(api_key=self.anthropic_key)
+            if self.anthropic_base_url:
+                # A traves del proxy: solo el token Bearer, sin enviar la clave real de Anthropic
+                self._cliente_anthropic = anthropic.Anthropic(base_url=self.anthropic_base_url,
+                                                              auth_token=self.anthropic_token)
+            else:
+                self._cliente_anthropic = anthropic.Anthropic(api_key=self.anthropic_key)
         return self._cliente_anthropic
 
     def _anthropic(self, history):
-        if not self.anthropic_key:
+        if not self._hay_anthropic():
             raise IAError("No tengo clave de Anthropic.",
                           "Falta ANTHROPIC_API_KEY en el archivo .env (o usa Ollama).")
         for _ in range(MAX_VUELTAS):
