@@ -15,6 +15,9 @@ from urllib.parse import urlparse
 LOG = Path(__file__).resolve().with_name("omniroute_log.txt")
 ESPERA = 60                      # segundos maximos esperando a que OmniRoute acepte conexiones
 _proc = None                     # el OmniRoute que ha lanzado Jarvis
+# Claves de Jarvis (.env) que OmniRoute no necesita ver
+_DE_JARVIS = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ELEVENLABS_API_KEY",
+              "ELEVENLABS_VOICE_ID", "NGROK_DOMINIO", "CLAUDE_MODEL"}
 _esperar = time.sleep            # sustituible en las pruebas
 
 
@@ -60,10 +63,13 @@ def iniciar(espera=ESPERA):
     exe = buscar()
     if not exe:
         return "OmniRoute está cerrado y no lo encuentro instalado; uso el cerebro local."
+    carpeta = Path.home() / ".omniroute"      # OmniRoute lee el .env de donde arranca: nunca el de Jarvis
+    carpeta.mkdir(exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in _DE_JARVIS and not k.startswith("WHATSAPP_")}
     try:
         with open(LOG, "ab") as log:
             _proc = subprocess.Popen(["cmd", "/c", exe], stdout=log, stderr=subprocess.STDOUT,
-                                     stdin=subprocess.DEVNULL,
+                                     stdin=subprocess.DEVNULL, cwd=str(carpeta), env=env,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except OSError as e:
         _proc = None

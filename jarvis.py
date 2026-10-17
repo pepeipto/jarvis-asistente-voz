@@ -1070,6 +1070,11 @@ def crear_ui():
         return None
 
 
+# Respaldo gratuito de OmniRoute, en orden, si falla Claude (medido el 17/10/2026: responden en español y usan
+# herramientas). auto/best-free no usa herramientas, por eso ya no se usa. Se cambia con MODELOS_GRATIS.
+MODELOS_GRATIS = "antigravity/gemini-3-flash,antigravity/claude-sonnet-4-6,ddgw/gpt-5.6-luna,auto/best-fast"
+
+
 def crear_ia():
     proveedor = (_env("LLM_PROVEEDOR", "auto") or "auto").lower()
     hay_nube = bool((ANTHROPIC_BASE_URL and ANTHROPIC_TOKEN) or ANTHROPIC_KEY) and proveedor != "ollama"
@@ -1080,7 +1085,8 @@ def crear_ia():
                    anthropic_key=ANTHROPIC_KEY, anthropic_model=MODEL,
                    proveedor=proveedor, ollama_model=ollama_model,
                    contexto_fn=contexto, anthropic_base_url=ANTHROPIC_BASE_URL,
-                   anthropic_token=ANTHROPIC_TOKEN)
+                   anthropic_token=ANTHROPIC_TOKEN,
+                   modelo_respaldo_nube=_env("MODELOS_GRATIS", MODELOS_GRATIS) or MODELOS_GRATIS)
 
     def reparacion(origen, texto):
         registro.error(origen, texto, "reparado automaticamente")
