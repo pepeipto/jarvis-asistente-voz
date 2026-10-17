@@ -1104,5 +1104,131 @@ class WhatsAppCanal(unittest.TestCase):
         self.assertEqual(self.canal.antes_de_la_ia("sí"), "Me pongo con ello. Te aviso cuando termine.")
 
 
+class WhatsAppNgrok(unittest.TestCase):
+    VARS = ("NGROK_DOMINIO", "WHATSAPP_PUERTO")
+
+    def setUp(self):
+        import os
+        import subprocess
+        import whatsapp
+        self.os, self.sp, self.w = os, subprocess, whatsapp
+        self.antes_env = {v: os.environ.get(v) for v in self.VARS}
+        self.antes_mod = (whatsapp._proc_ngrok, whatsapp._esperar, whatsapp.buscar_ngrok,
+                          whatsapp.ngrok_ya_publica, whatsapp._matar_ngrok, subprocess.Popen, whatsapp.LOG_NGROK)
+        self.tmp = __import__("tempfile").mkdtemp(prefix="jarvis_ngrok_")
+        whatsapp.LOG_NGROK = __import__("pathlib").Path(self.tmp) / "ngrok_log.txt"
+        whatsapp._proc_ngrok = None
+        whatsapp._esperar = lambda s: None
+        self.real_publica = whatsapp.ngrok_ya_publica
+        self.lanzados, self.matados = [], []
+
+        class Proc:
+            pid = 4242
+            codigo = None
+
+            def poll(s):
+                return s.codigo
+        self.Proc = Proc
+
+        def popen(cmd, **kw):
+            self.lanzados.append((cmd, kw))
+            return Proc()
+        subprocess.Popen = popen
+        whatsapp._matar_ngrok = lambda p: self.matados.append(p.pid)
+        os.environ["NGROK_DOMINIO"] = "abc.ngrok-free.app"
+        os.environ["WHATSAPP_PUERTO"] = "8766"
+        whatsapp.buscar_ngrok = lambda: "ngrok.exe"
+        whatsapp.ngrok_ya_publica = lambda: False
+
+    def tearDown(self):
+        import shutil
+        w = self.w
+        (w._proc_ngrok, w._esperar, w.buscar_ngrok, w.ngrok_ya_publica, w._matar_ngrok,
+         self.sp.Popen, w.LOG_NGROK) = self.antes_mod
+        for v, valor in self.antes_env.items():
+            if valor is None:
+                self.os.environ.pop(v, None)
+            else:
+                self.os.environ[v] = valor
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_comando(self):
+        self.assertEqual(self.w.comando_ngrok("ngrok.exe"),
+                         ["ngrok.exe", "http", "--url=https://abc.ngrok-free.app", "8766", "--log=stdout"])
+
+    def test_dominio_normalizado(self):
+        self.os.environ["NGROK_DOMINIO"] = " https://abc.ngrok-free.app/ "
+        self.assertEqual(self.w.comando_ngrok("n")[2], "--url=https://abc.ngrok-free.app")
+
+    def test_sin_dominio_no_lanza(self):
+        self.os.environ.pop("NGROK_DOMINIO")
+        self.assertIsNone(self.w.iniciar_ngrok())
+        self.assertEqual(self.lanzados, [])
+
+    def test_sin_exe(self):
+        self.w.buscar_ngrok = lambda: None
+        r = self.w.iniciar_ngrok()
+        self.assertIn("ngrok", r)
+        self.assertIn("LEEME", r)
+        self.assertEqual(self.lanzados, [])
+
+    def test_ya_publicado_no_lanza(self):
+        self.w.ngrok_ya_publica = lambda: True
+        self.assertIsNone(self.w.iniciar_ngrok())
+        self.assertEqual(self.lanzados, [])
+        self.w.parar_ngrok()
+        self.assertEqual(self.matados, [])
+
+    def test_lanza_y_para(self):
+        self.assertIsNone(self.w.iniciar_ngrok())
+        cmd, kw = self.lanzados[0]
+        self.assertEqual(cmd, self.w.comando_ngrok("ngrok.exe"))
+        self.assertEqual(kw["stderr"], self.sp.STDOUT)
+        self.assertEqual(kw["stdin"], self.sp.DEVNULL)
+        self.w.parar_ngrok()
+        self.assertEqual(self.matados, [4242])
+        self.w.parar_ngrok()
+        self.assertEqual(self.matados, [4242])
+
+    def test_si_muere_avisa(self):
+        orig = self.sp.Popen
+
+        def muerto(cmd, **kw):
+            p = orig(cmd, **kw)
+            p.codigo = 1
+            return p
+        self.sp.Popen = muerto
+        r = self.w.iniciar_ngrok()
+        self.assertIn("ngrok_log.txt", r)
+        self.assertIn("LEEME", r)
+
+    def test_parar_sin_arrancar(self):
+        self.w.parar_ngrok()
+        self.assertEqual(self.matados, [])
+
+    def test_ya_publica_nunca_lanza(self):
+        import requests
+        orig = requests.get
+        try:
+            def roto(*a, **k):
+                raise OSError("sin red")
+            requests.get = roto
+            self.assertFalse(self.real_publica())
+
+            class R:
+                def json(s):
+                    return {"tunnels": [{"public_url": "https://abc.ngrok-free.app"}]}
+            requests.get = lambda *a, **k: R()
+            self.assertTrue(self.real_publica())
+
+            class Mala:
+                def json(s):
+                    return [1, 2]
+            requests.get = lambda *a, **k: Mala()
+            self.assertFalse(self.real_publica())
+        finally:
+            requests.get = orig
+
+
 if __name__ == "__main__":
     unittest.main()
