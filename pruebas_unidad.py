@@ -1071,6 +1071,29 @@ class WhatsAppCanal(unittest.TestCase):
         self.assertEqual(self.canal.antes_de_la_ia("sí"), "hecho drive_crear_documento")
         self.assertEqual(len(self.llamadas), 1)
 
+    def _dos_pendientes(self):
+        self.lanzadas = []
+        self.t._lanzar = lambda d, c: self.lanzadas.append((d, c))
+        self.t.ejecutable = lambda: "claude.exe"
+        self.t._pendiente = {"descripcion": "x", "carpeta": "c", "momento": self.time.time()}
+        self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
+
+    def test_si_a_tarea_desarma_el_correo(self):
+        self._dos_pendientes()
+        self.assertEqual(self.canal.antes_de_la_ia("sí"), "Me pongo con ello. Te aviso cuando termine.")
+        self.assertEqual(len(self.lanzadas), 1)
+        self.assertIsNone(self.canal.pendiente())
+        self.assertIsNone(self.canal.antes_de_la_ia("sí"))
+        self.assertEqual(self.llamadas, [])
+
+    def test_no_a_tarea_desarma_el_correo(self):
+        self._dos_pendientes()
+        self.assertEqual(self.canal.antes_de_la_ia("no"), "Vale, no hago nada.")
+        self.assertEqual(self.lanzadas, [])
+        self.assertIsNone(self.canal.pendiente())
+        self.assertIsNone(self.canal.antes_de_la_ia("sí"))
+        self.assertEqual(self.llamadas, [])
+
     def test_encargar_tarea_usa_tareas(self):
         self.t._lanzar = lambda d, c: None
         self.t.ejecutable = lambda: "claude.exe"
