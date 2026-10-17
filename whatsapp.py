@@ -647,3 +647,100 @@ def revisar_citas(eventos: list, ahora: float = None) -> int:
     if hechos:
         _actualizar_estado(lambda d: d["citas_avisadas"].update({k: ahora for k in hechos}))
     return len(hechos)
+
+
+# ---------------------------------------------------------------- ngrok
+
+LOG_NGROK = Path(__file__).resolve().with_name("ngrok_log.txt")
+ESPERA_NGROK = 3                # segundos antes de comprobar que ngrok sigue vivo
+_proc_ngrok = None              # el ngrok que ha lanzado Jarvis (nunca uno ajeno)
+_esperar = time.sleep           # sustituible en las pruebas
+
+
+def _dominio_ngrok() -> str:
+    d = os.getenv("NGROK_DOMINIO", "").strip()
+    d = re.sub(r"^https?://", "", d, flags=re.I)
+    return d.strip().strip("/")
+
+
+def buscar_ngrok():
+    """Ruta de ngrok.exe: en el PATH o en los sitios habituales de Windows; None si no esta."""
+    import shutil
+    ruta = shutil.which("ngrok")
+    if ruta:
+        return ruta
+    local = os.getenv("LOCALAPPDATA", "")
+    perfil = os.getenv("USERPROFILE", "")
+    candidatos = []
+    if local:
+        candidatos += [Path(local) / "Microsoft" / "WinGet" / "Links" / "ngrok.exe",
+                       Path(local) / "ngrok" / "ngrok.exe"]
+    if perfil:
+        candidatos.append(Path(perfil) / "ngrok" / "ngrok.exe")
+    for c in candidatos:
+        if c.is_file():
+            return str(c)
+    return None
+
+
+def comando_ngrok(exe: str) -> list:
+    return [exe, "http", f"--url=https://{_dominio_ngrok()}", str(_puerto()), "--log=stdout"]
+
+
+def ngrok_ya_publica() -> bool:
+    """True si ya hay un ngrok publicando el dominio (nunca lanza)."""
+    try:
+        r = requests.get("http://127.0.0.1:4040/api/tunnels", timeout=1)
+        dominio = _dominio_ngrok().lower()
+        if not dominio:
+            return False
+        return any(dominio in str(t.get("public_url", "")).lower() for t in r.json().get("tunnels", []))
+    except Exception:
+        return False
+
+
+def _matar_ngrok(proc):
+    import subprocess
+    subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def iniciar_ngrok():
+    """Lanza ngrok para publicar el receptor. None si va bien o no hay dominio; si no, el problema."""
+    global _proc_ngrok
+    import subprocess
+    if not _dominio_ngrok():
+        return None
+    if _proc_ngrok is not None and _proc_ngrok.poll() is None:
+        return None
+    if ngrok_ya_publica():
+        return None
+    exe = buscar_ngrok()
+    if not exe:
+        return "No encuentro ngrok. Instálalo como explica el LEEME y reinicia a Jarvis."
+    try:
+        with open(LOG_NGROK, "ab") as log:
+            _proc_ngrok = subprocess.Popen(
+                comando_ngrok(exe), stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        _proc_ngrok = None
+        registro.error("ngrok", "no se pudo lanzar", exc=e)
+        return "No he podido arrancar ngrok. Mira ngrok_log.txt y el LEEME."
+    _esperar(ESPERA_NGROK)
+    if _proc_ngrok.poll() is not None:
+        _proc_ngrok = None
+        return "ngrok no ha arrancado. Mira ngrok_log.txt y el LEEME."
+    return None
+
+
+def parar_ngrok() -> None:
+    """Cierra solo el ngrok que lanzo Jarvis."""
+    global _proc_ngrok
+    proc, _proc_ngrok = _proc_ngrok, None
+    if proc is None:
+        return
+    try:
+        _matar_ngrok(proc)
+    except Exception:
+        pass
