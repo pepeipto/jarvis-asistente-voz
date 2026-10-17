@@ -24,6 +24,13 @@ class _Stream:
     def text_stream(self):
         return iter(self.trozos)
 
+    def __iter__(self):                 # eventos como los del SDK: el buscador de Claude empieza antes del texto
+        for b in self.bloques:
+            if getattr(b, "type", "") == "server_tool_use":
+                yield SimpleNamespace(type="content_block_start", content_block=b)
+        for t in self.trozos:
+            yield SimpleNamespace(type="text", text=t)
+
     def get_final_message(self):
         return SimpleNamespace(content=self.bloques, stop_reason=self.stop)
 
@@ -159,6 +166,123 @@ class CerebroNube(unittest.TestCase):
         ia._proxy_responde = lambda: False
         ia.modelos_ollama = lambda forzar=False: []
         self.assertIsNone(ia.precalentar())                   # mira Ollama en vez de la nube
+
+    # ---- v1.8: nunca callado y la API directa de Anthropic no es un proxy
+    def test_respuesta_vacia_pasa_al_siguiente(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [([], [], "end_turn")],
+                          "auto/best-free": [(["Aquí estoy."], [_texto("Aquí estoy.")], "end_turn")]})
+        ia = _ia(c)
+        self.assertEqual(ia.responder([{"role": "user", "content": "hola"}]), "Aquí estoy.")
+        self.assertEqual(ia.activo, "anthropic_gratis")
+
+    def test_respuesta_vacia_tras_herramienta_pasa_al_siguiente(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [([], [_uso("buscar_web", {"consulta": "x"})], "tool_use"),
+                                                  ([], [], "end_turn")],
+                          "auto/best-free": [(["Dato."], [_texto("Dato.")], "end_turn")]})
+        hist = [{"role": "user", "content": "busca x"}]
+        self.assertEqual(_ia(c).responder(hist), "Dato.")
+        self.assertEqual(hist[-1], {"role": "assistant", "content": "Dato."})
+
+    def test_todas_vacias_da_error_hablado(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [([], [], "end_turn")], "auto/best-free": [([], [], "end_turn")]})
+        ia = _ia(c)
+        ia._ollama = lambda h, on_texto=None: ""
+        with self.assertRaises(llm.IAError) as e:
+            ia.responder([{"role": "user", "content": "hola"}])
+        self.assertTrue(e.exception.hablado)
+
+    def test_claude_busca_en_internet_con_su_buscador(self):
+        bloques = [SimpleNamespace(type="server_tool_use", name="web_search", input={"query": "tiempo madrid"}, id="s1"),
+                   SimpleNamespace(type="web_search_tool_result", content=[], tool_use_id="s1"),
+                   _texto("En Madrid hoy "), _texto("hay 18 grados.")]
+        c = ClienteFalso({"cc/claude-haiku-5-5": [(["En Madrid hoy ", "hay 18 grados."], bloques, "end_turn")]})
+        ia = _ia(c)
+        ia.tools = [{"name": "buscar_web", "description": "", "input_schema": {}},
+                    {"name": "leer_web", "description": "", "input_schema": {}}]
+        hist = [{"role": "user", "content": "qué tiempo hace en madrid"}]
+        self.assertEqual(ia.responder(hist), "En Madrid hoy hay 18 grados.")
+        herramientas = c.llamadas[0]["tools"]
+        self.assertIn("web_search_20250305", [t.get("type") for t in herramientas])
+        self.assertNotIn("buscar_web", [t.get("name") for t in herramientas])   # mejor el buscador de Claude
+        self.assertIn("leer_web", [t.get("name") for t in herramientas])
+        self.assertEqual(hist[-1]["content"], "En Madrid hoy hay 18 grados.")
+        self.assertIn("tiempo madrid", hist[-1]["busquedas"])
+
+    def test_el_historial_recuerda_lo_que_busco(self):
+        # sin esto, en el turno siguiente Claude veia citas sin busqueda y "confesaba" haberlas inventado
+        res = SimpleNamespace(type="web_search_tool_result", tool_use_id="s1",
+                              content=[SimpleNamespace(type="web_search_result", title="F1 Singapur",
+                                                       url="https://f1.com/singapur")])
+        bloques = [SimpleNamespace(type="server_tool_use", name="web_search", input={"query": "ganador GP F1"}, id="s1"),
+                   res, _texto("Ganó Verstappen.")]
+        c = ClienteFalso({"cc/claude-haiku-5-5": [(["Ganó Verstappen."], bloques, "end_turn"),
+                                                  (["Vale."], [_texto("Vale.")], "end_turn")]})
+        ia = _ia(c)
+        hist = [{"role": "user", "content": "quien gano"}]
+        ia.responder(hist)
+        self.assertEqual(hist[-1]["content"], "Ganó Verstappen.")       # lo hablado no cambia
+        hist.append({"role": "user", "content": "gracias"})
+        ia.responder(hist)
+        asistente = c.llamadas[1]["messages"][1]["content"]
+        tipos = [b["type"] for b in asistente]
+        self.assertEqual(tipos, ["server_tool_use", "web_search_tool_result", "text"])   # la busqueda real, tal cual
+        self.assertEqual(asistente[0]["input"], {"query": "ganador GP F1"})
+        self.assertEqual(asistente[1]["content"][0]["url"], "https://f1.com/singapur")
+        self.assertIn("ganador GP F1", str(llm.IA._a_ollama(hist)))     # el modelo local recibe la nota
+        sin_buscador = str(llm.IA._a_anthropic(hist, crudo=False))      # p. ej. el modelo gratis
+        self.assertNotIn("server_tool_use", sin_buscador)
+        self.assertIn("ganador GP F1", sin_buscador)
+
+    def test_busqueda_de_claude_cuenta_como_contenido_externo(self):
+        bloques = [SimpleNamespace(type="server_tool_use", name="web_search", input={}, id="s1"), _texto("Dato.")]
+        c = ClienteFalso({"cc/claude-haiku-5-5": [(["Dato."], bloques, "end_turn")]})
+        ia, avisos, dicho = _ia(c), [], []
+        ia.on_externo = lambda: avisos.append(1)
+        ia.responder([{"role": "user", "content": "busca"}], on_texto=dicho.append)
+        self.assertEqual(avisos, [1])
+        self.assertIn(dicho[0], llm.ESPERAS)                    # no se queda callado mientras busca
+        self.assertEqual(dicho[-1], "Dato.")
+
+    def test_modelo_gratis_no_lleva_buscador_de_claude(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [RuntimeError("Error code: 429")],
+                          "auto/best-free": [(["Hola."], [_texto("Hola.")], "end_turn")]})
+        ia = _ia(c)
+        ia.tools = [{"name": "buscar_web", "description": "", "input_schema": {}}]
+        ia.responder([{"role": "user", "content": "hola"}])
+        self.assertEqual([t.get("name") for t in c.llamadas[1]["tools"]], ["buscar_web"])
+
+    def test_si_el_buscador_de_claude_no_esta_se_sigue_sin_el(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [
+            RuntimeError("Error code: 400 - tools.0: unknown tool type web_search_20250305"),
+            (["Vale."], [_texto("Vale.")], "end_turn")]})
+        ia = _ia(c)
+        ia.tools = [{"name": "buscar_web", "description": "", "input_schema": {}}]
+        self.assertEqual(ia.responder([{"role": "user", "content": "hola"}]), "Vale.")
+        self.assertFalse(ia.busqueda_nube)
+        self.assertEqual([t.get("name") for t in c.llamadas[1]["tools"]], ["buscar_web"])
+
+    def test_sin_saldo_no_se_reintenta_en_cada_pregunta(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [RuntimeError("Your credit balance is too low")],
+                          "auto/best-free": [RuntimeError("Your credit balance is too low")]})
+        ia = _ia(c)
+        ia._ollama = lambda h, on_texto=None: "local"
+        self.assertEqual(ia.responder([{"role": "user", "content": "hola"}]), "local")
+        n = len(c.llamadas)
+        self.assertEqual(ia.responder([{"role": "user", "content": "otra"}]), "local")
+        self.assertEqual(len(c.llamadas), n)                  # la segunda va directa a Ollama
+        ia._apartado = {}                                     # pasados 10 min se vuelve a probar
+        self.assertEqual(ia._orden()[0], "anthropic")
+
+    def test_api_oficial_es_directa_con_clave(self):
+        ia = llm.IA([], lambda: "s", lambda n, a: "ok", anthropic_key="sk-ant-x", anthropic_token="tok-omni",
+                    anthropic_model="cc/claude-haiku-5-5", anthropic_base_url="https://api.anthropic.com")
+        self.assertFalse(ia.es_proxy)
+        self.assertEqual(ia.anthropic_model, "claude-haiku-5-5")
+        self.assertEqual(ia._orden(), ["anthropic", "ollama"])        # sin el "gratis" de OmniRoute
+        self.assertNotIn("OmniRoute", ia.describir())
+        cli = ia._cliente()
+        self.assertEqual(cli.api_key, "sk-ant-x")
+        self.assertIsNone(cli.auth_token)                              # nunca el token del proxy
 
     def test_proxy_responde_comprueba_el_puerto(self):
         import socket
@@ -311,6 +435,118 @@ class BusquedaWeb(unittest.TestCase):
     def test_herramienta_ajena(self):
         import web
         self.assertIsNone(web.ejecutar("hora_actual", {}))
+
+
+HTML_LITE = """<table><tr><td valign="top">1.&nbsp;</td><td>
+<a rel="nofollow" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.pccomponentes.com%2Frtx%2D5090&amp;rut=x"
+ class='result-link'>RTX 5090 | PcComponentes</a></td></tr>
+<tr><td>&nbsp;</td><td class='result-snippet'>Desde <b>2.399</b> € con 32 GB GDDR7.</td></tr>
+<tr><td valign="top">2.&nbsp;</td><td><a rel="nofollow" href="https://www.idealo.es/rtx5090" class='result-link'>RTX 5090 al mejor precio</a></td></tr>
+<tr><td>&nbsp;</td><td class='result-snippet'>Precios desde 2.299 €</td></tr></table>"""
+RETO_DDG = "<html>Unfortunately, bots use DuckDuckGo too. Please complete the following challenge (anomaly)</html>"
+
+
+class _Resp:
+    def __init__(self, texto="", estado=200, datos=None, cabeceras=None):
+        self.text, self.status_code, self._datos = texto, estado, datos
+        self.headers = cabeceras or {"Content-Type": "text/html; charset=utf-8"}
+        self.content = texto.encode("utf-8")
+        self.encoding, self.apparent_encoding, self.url = "utf-8", "utf-8", ""
+
+    def json(self):
+        return self._datos
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise __import__("requests").HTTPError(str(self.status_code))
+
+
+class InternetFiable(unittest.TestCase):
+    """v1.8: DuckDuckGo pone un reto anti-robots a su version HTML y Jarvis lo tomaba por 'no hay nada'."""
+    def setUp(self):
+        import web
+        self.w = web
+        self._pedir, self._ip = web._pedir, web._ip_publica
+        self.pedidas = []
+
+    def tearDown(self):
+        self.w._pedir, self.w._ip_publica = self._pedir, self._ip
+
+    def _respuestas(self, por_url):
+        def pedir(metodo, url, **kw):
+            self.pedidas.append(url)
+            for trozo, r in por_url.items():
+                if trozo in url:
+                    return r(kw) if callable(r) else r
+            raise AssertionError(f"peticion inesperada: {url}")
+        self.w._pedir = pedir
+
+    def test_lite_analiza_resultados(self):
+        r = self.w._analizar_lite(HTML_LITE)
+        self.assertEqual([x["url"] for x in r], ["https://www.pccomponentes.com/rtx-5090", "https://www.idealo.es/rtx5090"])
+        self.assertIn("2.399 €", r[0]["fragmento"])
+
+    def test_usa_lite_primero(self):
+        self._respuestas({"lite.duckduckgo.com": _Resp(HTML_LITE)})
+        self.assertEqual(len(self.w.buscar("precio rtx 5090")), 2)
+
+    def test_reto_antirobots_pasa_a_otra_fuente(self):
+        wiki = {"query": {"search": [{"title": "GeForce 50", "snippet": "La <span>RTX 5090</span> salió en 2025"}]}}
+        self._respuestas({"lite.duckduckgo.com": _Resp(RETO_DDG, 202), "html.duckduckgo.com": _Resp(RETO_DDG, 202),
+                          "wikipedia.org": _Resp(datos=wiki)})
+        r = self.w.buscar("rtx 5090")
+        self.assertEqual(r[0]["titulo"], "GeForce 50")
+        self.assertIn("es.wikipedia.org/wiki/GeForce_50", r[0]["url"])
+        self.assertNotIn("<span>", r[0]["fragmento"])
+
+    def test_todo_bloqueado_lo_dice_claro(self):
+        self._respuestas({"duckduckgo.com": _Resp(RETO_DDG, 202), "wikipedia.org": _Resp(datos={"query": {"search": []}})})
+        t = self.w.ejecutar("buscar_web", {"consulta": "algo"})
+        self.assertIn("No he encontrado", t)
+        self.assertIn("leer_web", t)                           # le sugiere a la IA otra via, no rendirse
+
+    def test_leer_web_devuelve_texto_limpio(self):
+        pagina = ("<html><head><title>RTX</title><style>.x{}</style><script>alert(1)</script></head>"
+                  "<body><nav>menu</nav><p>Precio: <b>2.399 €</b></p></body></html>")
+        self._respuestas({"pccomponentes.com": _Resp(pagina)})
+        self.w._ip_publica = lambda host: True
+        t = self.w.ejecutar("leer_web", {"url": "https://www.pccomponentes.com/rtx-5090"})
+        self.assertIn("Precio: 2.399 €", t)
+        self.assertNotIn("alert", t)
+        self.assertNotIn(".x{}", t)
+
+    def test_leer_web_no_entra_en_tu_red(self):
+        self._respuestas({})
+        for url in ("http://localhost:20128/v1/models", "http://127.0.0.1:8766/", "http://192.168.1.1/",
+                    "file:///C:/Windows/win.ini", "http://[::1]/", "http://10.0.0.5/x"):
+            self.assertIn("no", self.w.ejecutar("leer_web", {"url": url}).lower(), url)
+        self.assertEqual(self.pedidas, [])
+
+    def test_leer_web_no_sigue_redirecciones_a_tu_red(self):
+        self._respuestas({"ejemplo.com": _Resp("", 302, cabeceras={"Location": "http://127.0.0.1:8766/"})})
+        self.w._ip_publica = lambda host: host not in ("127.0.0.1", "localhost")
+        self.assertIn("no", self.w.ejecutar("leer_web", {"url": "https://ejemplo.com/"}).lower())
+        self.assertEqual(self.pedidas, ["https://ejemplo.com/"])
+
+    def test_tiempo_con_open_meteo(self):
+        geo = {"results": [{"name": "Madrid", "admin1": "Comunidad de Madrid", "country": "España",
+                            "latitude": 40.4, "longitude": -3.7}]}
+        pron = {"current": {"temperature_2m": 18.3, "apparent_temperature": 17.0, "relative_humidity_2m": 55,
+                            "wind_speed_10m": 12.0, "weather_code": 3},
+                "daily": {"time": ["2026-10-17", "2026-10-18"], "weather_code": [3, 61],
+                          "temperature_2m_max": [21.0, 17.5], "temperature_2m_min": [9.0, 10.1],
+                          "precipitation_probability_max": [5, 80]}}
+        self._respuestas({"geocoding-api.open-meteo.com": _Resp(datos=geo), "api.open-meteo.com": _Resp(datos=pron)})
+        t = self.w.ejecutar("tiempo", {"lugar": "Madrid"})
+        self.assertIn("Madrid", t)
+        self.assertIn("18", t)
+        self.assertIn("nublado", t.lower())
+        self.assertIn("lluvia", t.lower())
+        self.assertIn("80%", t)
+
+    def test_tiempo_lugar_desconocido(self):
+        self._respuestas({"geocoding-api.open-meteo.com": _Resp(datos={})})
+        self.assertIn("No encuentro", self.w.ejecutar("tiempo", {"lugar": "Zzzxq"}))
 
 
 class EncargarTareas(unittest.TestCase):
@@ -480,6 +716,66 @@ class EncargarTareas(unittest.TestCase):
             self.t.subprocess.Popen, self.t.on_fin, self.t.LOG = antes, fin_antes, log_antes
         self.assertEqual(self.t._ultima_sesion, {"id": "s-9", "carpeta": self.tmp, "programar": True})
         self.assertIn("Hecho.", avisos[0])
+
+
+class OmniRouteArranque(unittest.TestCase):
+    """v1.8: si el cerebro va por OmniRoute y esta cerrado, Jarvis lo abre solo y lo cierra al salir."""
+    def setUp(self):
+        import os
+        import omniroute
+        self.o, self.os = omniroute, os
+        self.antes = {k: os.environ.get(k) for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN")}
+        os.environ.update(ANTHROPIC_BASE_URL="http://localhost:20128", ANTHROPIC_AUTH_TOKEN="t")
+        self._fns = (omniroute.responde, omniroute.buscar, omniroute.subprocess.Popen, omniroute._esperar,
+                     omniroute._matar)
+        self.lanzados, self.matados = [], []
+        omniroute._esperar = lambda s: None
+        omniroute._matar = self.matados.append
+        omniroute._proc = None
+
+    def tearDown(self):
+        (self.o.responde, self.o.buscar, self.o.subprocess.Popen, self.o._esperar, self.o._matar) = self._fns
+        self.o._proc = None
+        for k, v in self.antes.items():
+            if v is None:
+                self.os.environ.pop(k, None)
+            else:
+                self.os.environ[k] = v
+
+    def _popen(self, *a, **k):
+        self.lanzados.append(a[0])
+        return type("P", (), {"poll": lambda s: None, "pid": 7})()
+
+    def test_ya_abierto_no_lanza_nada(self):
+        self.o.responde = lambda: True
+        self.o.subprocess.Popen = self._popen
+        self.assertIsNone(self.o.iniciar())
+        self.assertEqual(self.lanzados, [])
+
+    def test_cerrado_lo_abre_y_espera(self):
+        estados = iter([False, False, False, True])
+        self.o.responde = lambda: next(estados)
+        self.o.buscar = lambda: r"C:\npm\omniroute.cmd"
+        self.o.subprocess.Popen = self._popen
+        self.assertIsNone(self.o.iniciar(espera=10))
+        self.assertIn(r"C:\npm\omniroute.cmd", self.lanzados[0])
+        self.o.parar()
+        self.assertEqual(len(self.matados), 1)
+
+    def test_sin_omniroute_instalado_lo_dice(self):
+        self.o.responde = lambda: False
+        self.o.buscar = lambda: None
+        self.assertIn("OmniRoute", self.o.iniciar())
+
+    def test_api_directa_no_necesita_omniroute(self):
+        self.os.environ["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
+        self.o.responde = lambda: (_ for _ in ()).throw(AssertionError("no debia mirar OmniRoute"))
+        self.assertFalse(self.o.configurado())
+        self.assertIsNone(self.o.iniciar())
+
+    def test_no_cierra_uno_que_no_abrio(self):
+        self.o.parar()
+        self.assertEqual(self.matados, [])
 
 
 class _SdFalso:

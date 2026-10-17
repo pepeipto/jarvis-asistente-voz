@@ -10,6 +10,7 @@ con Google Calendar, Gmail y Drive. Tiene una interfaz 3D (un orbe animado con T
 ## Qué hace
 - **Voz en tiempo real**: transcripción en vivo con ElevenLabs (o Whisper local) y voz con ElevenLabs
   (modelo *flash*). Palabra de activación configurable y 10 s para seguir hablando sin repetirla.
+- **Busca en internet sin preguntar**: con Claude usa su propio buscador (todo internet, con fuentes).
 - **Cerebro de IA intercambiable**: Ollama local (por ejemplo `qwen3.8:27b`) o Claude (API de Anthropic
   directa o a través de un proxy compatible como OmniRoute, con `ANTHROPIC_BASE_URL`).
   Si un proveedor falla pasa solo al otro.
@@ -71,7 +72,8 @@ empieza a hablar.
 | `llm.py` | Cerebro de IA: Ollama y Claude con herramientas, respaldo entre proveedores y corrección de respuestas |
 | `memoria.py` | Segundo cerebro: guardar, buscar e importar documentos |
 | `pc.py` | Programas, carpetas y archivos del PC (con carpetas permitidas) |
-| `web.py` | Búsqueda web (DuckDuckGo) |
+| `web.py` | Internet: búsqueda (DuckDuckGo lite, HTML y Wikipedia), leer páginas y el tiempo (Open-Meteo) |
+| `omniroute.py` | Abre OmniRoute al arrancar si está cerrado y lo cierra al salir |
 | `tareas.py` | Tareas grandes con Claude Code y confirmación por voz |
 | `pruebas_unidad.py` | Pruebas rápidas sin voz ni red |
 | `google_conector.py`, `conectar_google.py` | Calendar, Gmail y Drive (OAuth) |
@@ -86,6 +88,10 @@ empieza a hablar.
 ## Privacidad
 Fuera del repositorio (ver `.gitignore`): `.env` (claves), `google/` (permisos de Google), `cerebro/`
 (tus notas), registros y entornos. El registro de errores no guarda lo que dices, ni correos ni notas.
+
+## Versión 1.8
+Arranque a prueba de fallos (abre OmniRoute solo, nunca se queda callado) e internet de verdad: usa el
+buscador de Claude en todo internet, lee páginas y da el tiempo. Detalle en [CHANGELOG.md](CHANGELOG.md).
 
 ## Versión 1.7
 Oído fiable (ya no cambia de micrófono al azar ni se queda sordo) y modo programador: Claude Code

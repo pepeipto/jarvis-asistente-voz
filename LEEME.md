@@ -27,7 +27,8 @@ Ejemplos:
 - "Jarvis, abre Excel." / "Jarvis, abre la carpeta de descargas."  (cualquier programa del menu Inicio)
 - "Jarvis, busca el archivo del presupuesto y leemelo."  (solo en tus carpetas: Escritorio, Documentos,
   Descargas, Imagenes, Musica, Videos y OneDrive; se cambian con CARPETAS_PERMITIDAS en ajustes.env)
-- "Jarvis, busca en internet que tiempo hara mañana."
+- "Jarvis, ¿cuánto cuesta una RTX 5090?" / "¿quién ganó ayer?" / "¿qué tiempo hará mañana en Sevilla?"
+  Busca en internet sin preguntar (con Claude, en todo internet) y lee las páginas si hace falta.
 - "Jarvis, encarga una tarea: ordena los PDF de descargas en carpetas por año."  Jarvis te repite la
   tarea y espera a que digas "si" o "adelante". La hace Claude Code en segundo plano (por defecto en
   Documentos\Jarvis\tareas) y te avisa al terminar. "Jarvis, como va la tarea?" / "cancela la tarea".
@@ -67,7 +68,7 @@ Al empezar la noche era 3,2 s. Lo que lo consigue:
 `jarvis_log.txt` guarda el tiempo de cada respuesta.
 
 ## Requisitos de la v1.5
-- OmniRoute abierto en tu PC (http://localhost:20128) con `ANTHROPIC_BASE_URL` y `ANTHROPIC_AUTH_TOKEN`
+- OmniRoute instalado (Jarvis lo abre solo al arrancar desde la v1.8; http://localhost:20128) con `ANTHROPIC_BASE_URL` y `ANTHROPIC_AUTH_TOKEN`
   en `.env`. Modelo: `CLAUDE_MODEL=cc/claude-haiku-5-5`.
 - Para encargar tareas: Claude Code (`npm install -g @anthropic-ai/claude-code`). `diagnostico.bat` lo comprueba.
 - Pruebas rapidas sin voz: `venv\Scripts\python.exe -m unittest pruebas_unidad -v`
