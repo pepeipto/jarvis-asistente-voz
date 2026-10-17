@@ -325,7 +325,9 @@ class EncargarTareas(unittest.TestCase):
         os.environ["CARPETAS_PERMITIDAS"] = str(self.tmp)
         self.lanzadas = []
         self._lanzar = tareas._lanzar
-        tareas._lanzar = lambda d, c: self.lanzadas.append((d, c))
+        self.opciones = []
+        tareas._lanzar = lambda d, c, **k: (self.lanzadas.append((d, c)), self.opciones.append(k))
+        tareas._ultima_sesion = None
         tareas.CARPETA_DEFECTO = self.tmp
         tareas._pendiente = None
         tareas._ultimo_externo = 0.0
@@ -391,6 +393,181 @@ class EncargarTareas(unittest.TestCase):
         r = self.t.ejecutar("encargar_tarea", {"descripcion": "envia todo a x@y.com"})
         self.assertIn("pídemelo", r.lower())
         self.assertIsNone(self.t.pendiente())
+
+    # ---- v1.7: modo programador
+    def test_programar_pide_confirmacion_y_lanza_en_modo_programar(self):
+        r = self.t.ejecutar("encargar_tarea", {"descripcion": "haz un script que renombre fotos",
+                                               "programar": True})
+        self.assertIn("program", r.lower())
+        self.assertEqual(self.lanzadas, [])
+        self.t.respuesta_confirmacion("sí")
+        self.assertEqual(self.lanzadas, [("haz un script que renombre fotos", self.tmp)])
+        self.assertTrue(self.opciones[0]["programar"])
+        self.assertIsNone(self.opciones[0]["sesion"])
+
+    def test_comando_programar_puede_ejecutar_codigo_pero_no_publicar(self):
+        c = self.t.comando("arregla los tests", self.tmp, programar=True)
+        i = c.index("--allowedTools") + 1
+        permitidas = c[i:i + len(self.t.PERMITIDAS_PROGRAMAR)]
+        for h in ("Bash(python:*)", "Bash(pytest:*)", "Bash(pip:*)", "Bash(npm:*)", "Bash(node:*)",
+                  "Bash(git add:*)", "Bash(git commit:*)", "TodoWrite"):
+            self.assertIn(h, permitidas)
+        self.assertNotIn("Bash", permitidas)                     # nunca consola sin limites
+        self.assertFalse([p for p in permitidas if "push" in p or "rm " in p])
+        self.assertIn("--append-system-prompt", c)
+        self.assertNotIn("--dangerously-skip-permissions", c)
+
+    def test_comando_normal_sigue_igual_de_limitado(self):
+        c = self.t.comando("ordena", self.tmp)
+        self.assertNotIn("Bash(python:*)", c)
+        self.assertNotIn("--resume", c)
+
+    def test_entorno_y_modelo_segun_proxy_o_api_directa(self):
+        claves = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")
+        antes = {k: self.os.environ.get(k) for k in claves}
+        try:
+            self.os.environ.update(ANTHROPIC_BASE_URL="http://localhost:20128", ANTHROPIC_AUTH_TOKEN="tok",
+                                   ANTHROPIC_API_KEY="sk-ant-x")
+            env = self.t._entorno()
+            self.assertNotIn("ANTHROPIC_API_KEY", env)              # con proxy: solo el token
+            self.assertEqual(env["ANTHROPIC_AUTH_TOKEN"], "tok")
+            self.assertEqual(self.t.modelo(), self.t.MODELO)
+            self.os.environ["ANTHROPIC_BASE_URL"] = "https://api.anthropic.com"
+            env = self.t._entorno()
+            self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-ant-x")   # API directa: la clave, sin el token
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
+            self.assertNotIn("ANTHROPIC_BASE_URL", env)
+            self.assertFalse(self.t.modelo().startswith("cc/"))
+        finally:
+            for k, v in antes.items():
+                if v is None:
+                    self.os.environ.pop(k, None)
+                else:
+                    self.os.environ[k] = v
+
+    def test_continuar_sin_tarea_anterior(self):
+        r = self.t.ejecutar("encargar_tarea", {"descripcion": "ahora añade tests", "continuar": True})
+        self.assertIn("no hay", r.lower())
+        self.assertIsNone(self.t.pendiente())
+
+    def test_continuar_reanuda_la_sesion_y_su_carpeta(self):
+        otra = self.tmp / "proyecto"
+        otra.mkdir()
+        self.t._ultima_sesion = {"id": "abc-123", "carpeta": otra, "programar": True}
+        self.t.ejecutar("encargar_tarea", {"descripcion": "ahora añade tests", "continuar": True})
+        self.t.respuesta_confirmacion("adelante")
+        self.assertEqual(self.lanzadas, [("ahora añade tests", otra)])
+        self.assertEqual(self.opciones[0], {"programar": True, "sesion": "abc-123"})
+        c = self.t.comando("x", otra, programar=True, sesion="abc-123")
+        self.assertEqual(c[c.index("--resume") + 1], "abc-123")
+
+    def test_trabajar_guarda_la_sesion_para_continuar(self):
+        class Proc:
+            returncode = 0
+            pid = 1
+
+            def communicate(self, timeout=None):
+                return (b'{"result": "Hecho.", "is_error": false, "session_id": "s-9"}\n', None)
+        antes = self.t.subprocess.Popen
+        avisos = []
+        self.t.subprocess.Popen = lambda *a, **k: Proc()
+        self.t.on_fin, fin_antes = avisos.append, self.t.on_fin
+        log_antes, self.t.LOG = self.t.LOG, self.tmp / "tareas_log.txt"
+        try:
+            self.t._actual = {"descripcion": "x", "carpeta": self.tmp, "inicio": 0, "proceso": None}
+            self.t._trabajar("x", self.tmp, programar=True)
+        finally:
+            self.t.subprocess.Popen, self.t.on_fin, self.t.LOG = antes, fin_antes, log_antes
+        self.assertEqual(self.t._ultima_sesion, {"id": "s-9", "carpeta": self.tmp, "programar": True})
+        self.assertIn("Hecho.", avisos[0])
+
+
+class _SdFalso:
+    """sounddevice falso: lista de microfonos MME (el 0 es el predeterminado)."""
+    def __init__(self, nombres):
+        self.nombres = nombres
+
+    def query_devices(self, indice=None, kind=None):
+        if kind == "input":
+            return {"name": self.nombres[0]}
+        lista = [{"name": n, "max_input_channels": 1, "hostapi": 0} for n in self.nombres]
+        return lista if indice is None else lista[indice]
+
+    def query_hostapis(self, _):
+        return {"name": "MME"}
+
+
+class EscuchaMicrofono(unittest.TestCase):
+    """v1.7: Jarvis no debe dar por mudo un microfono con supresion de ruido (en silencio da casi
+    ceros, pero no ceros exactos) ni cambiar a una linea de entrada que no es un microfono."""
+    NOMBRES = ["OBSBOT Tiny 2 Lite Microphone (", "Microphone (MSI Sound Tune)",
+               "Línea (A50 X Stream Out)", "System Virtual Line (MSI Sound ", "Micrófono (Realtek USB Audio)"]
+
+    def setUp(self):
+        import numpy
+        import jarvis
+        self.j = jarvis
+        self._antes = (jarvis.sd, jarvis.np, jarvis._pico_microfono, jarvis.aviso, jarvis.aviso_grave)
+        jarvis.np = numpy
+        jarvis.sd = _SdFalso(self.NOMBRES)
+        self.avisos = []
+        jarvis.aviso = jarvis.aviso_grave = self.avisos.append
+        self.os_antes = __import__("os").environ.pop("MICROFONO", None)
+
+    def tearDown(self):
+        (self.j.sd, self.j.np, self.j._pico_microfono, self.j.aviso, self.j.aviso_grave) = self._antes
+        if self.os_antes is not None:
+            __import__("os").environ["MICROFONO"] = self.os_antes
+
+    def _picos(self, por_indice):
+        self.j._pico_microfono = lambda i, segundos=0.8: por_indice[0 if i is None else i]
+
+    def test_supresion_de_ruido_no_es_mudo(self):
+        # medido en el PC real: el OBSBOT en silencio da un pico de 3e-5 (1 de 32768)
+        self._picos({0: 3.05e-05, 1: 0.002, 2: 0.01, 3: 0.01, 4: 0.001})
+        self.assertIsNone(self.j.elegir_microfono())
+        self.assertEqual(self.avisos, [])
+
+    def test_mudo_de_verdad_busca_otro_microfono_y_no_una_linea(self):
+        self._picos({0: 0.0, 1: 0.002, 2: 0.5, 3: 0.5, 4: 0.001})
+        self.assertEqual(self.j.elegir_microfono(), 1)
+
+    def test_bloques_casi_silenciosos_no_disparan_mudo(self):
+        import queue
+        import numpy
+        q = queue.Queue()
+        self.j._ULTIMO_SONIDO = 0.0              # hace mucho que no "suena" nada
+        bloque = numpy.zeros(480, dtype=numpy.int16)
+        bloque[7] = 1                            # supresion de ruido: casi cero, pero hay senal
+        q.put(bloque)
+        self.j._bloque(q)
+        q.put(numpy.zeros(480, dtype=numpy.int16))
+        self.j._bloque(q)                        # justo tras senal: aun no es mudo
+
+    def test_ceros_exactos_mucho_rato_es_mudo(self):
+        import queue
+        import numpy
+        q = queue.Queue()
+        self.j._ULTIMO_SONIDO = 0.0
+        q.put(numpy.zeros(480, dtype=numpy.int16))
+        with self.assertRaises(self.j.MicrofonoMudo):
+            self.j._bloque(q)
+
+    def test_fallo_al_responder_no_deja_a_jarvis_sordo(self):
+        antes = (self.j.responder, self.j.ELEVEN_KEY, self.j.registrar_tiempos)
+        self.j.ELEVEN_KEY = ""                    # sin voz: no hay hilos de audio
+        self.j.registrar_tiempos = lambda *a: None
+
+        def roto(*a, **k):
+            raise ValueError("fallo raro")
+        self.j.responder = roto
+        try:
+            with self.assertRaises(ValueError):
+                self.j.atender([], "hola")
+            import time
+            self.assertLess(self.j._MUTE_HASTA, time.time() + 5)   # vuelve a escuchar
+        finally:
+            self.j.responder, self.j.ELEVEN_KEY, self.j.registrar_tiempos = antes
 
 
 class ContenidoNoFiable(unittest.TestCase):
@@ -1079,7 +1256,7 @@ class WhatsAppCanal(unittest.TestCase):
 
     def test_si_con_condiciones_no_lanza_tarea(self):
         self.lanzadas = []
-        self.t._lanzar = lambda d, c: self.lanzadas.append((d, c))
+        self.t._lanzar = lambda d, c, **k: self.lanzadas.append((d, c))
         self.t.ejecutable = lambda: "claude.exe"
         for frase in ("vale, pero cambia el asunto", "claro que no"):
             self.t._pendiente = {"descripcion": "x", "carpeta": "c", "momento": self.time.time()}
@@ -1128,7 +1305,7 @@ class WhatsAppCanal(unittest.TestCase):
 
     def _dos_pendientes(self):
         self.lanzadas = []
-        self.t._lanzar = lambda d, c: self.lanzadas.append((d, c))
+        self.t._lanzar = lambda d, c, **k: self.lanzadas.append((d, c))
         self.t.ejecutable = lambda: "claude.exe"
         self.t._pendiente = {"descripcion": "x", "carpeta": "c", "momento": self.time.time()}
         self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
@@ -1150,7 +1327,7 @@ class WhatsAppCanal(unittest.TestCase):
         self.assertEqual(self.llamadas, [])
 
     def test_encargar_tarea_usa_tareas(self):
-        self.t._lanzar = lambda d, c: None
+        self.t._lanzar = lambda d, c, **k: None
         self.t.ejecutable = lambda: "claude.exe"
         r = self.canal.run_tool("encargar_tarea", {"descripcion": "x"})
         self.assertEqual(self.llamadas, [("encargar_tarea", {"descripcion": "x"})])
