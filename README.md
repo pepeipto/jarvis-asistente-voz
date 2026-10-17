@@ -61,7 +61,7 @@ empieza a hablar.
 | `CEREBRO_DIR` | Carpeta del segundo cerebro (por defecto `cerebro/`) |
 | `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_MI_NUMERO` | WhatsApp: token de Meta, ID del número de Jarvis y tu número (sin ellas, WhatsApp queda apagado) |
 | `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `NGROK_DOMINIO` | WhatsApp entrante: firma de Meta, token de verificación del webhook y dominio fijo de ngrok |
-| `WHATSAPP_WABA_ID`, `WHATSAPP_PLANTILLA`, `WHATSAPP_AVISO_MIN`, `WHATSAPP_PUERTO`, `WHATSAPP_API_VERSION` | Opcionales: comprobar la plantilla en el diagnóstico, nombre de la plantilla (`aviso_jarvis`), minutos de antelación de los avisos de citas (15), puerto local (8766), versión de la Graph API |
+| `WHATSAPP_WABA_ID` (`.env`); `WHATSAPP_PLANTILLA`, `WHATSAPP_AVISO_MIN`, `WHATSAPP_PUERTO`, `WHATSAPP_API_VERSION` (`ajustes.env`) | Opcionales: comprobar la plantilla en el diagnóstico, nombre de la plantilla (`aviso_jarvis`), minutos de antelación de los avisos de citas (15), puerto local (8766), versión de la Graph API |
 
 ## Estructura
 | Archivo | Responsabilidad |

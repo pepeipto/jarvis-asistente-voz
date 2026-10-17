@@ -134,9 +134,10 @@ hace poco) funcionan igual.
    - `WHATSAPP_APP_SECRET`: el App Secret del paso 1.
    - `WHATSAPP_VERIFY_TOKEN`: una frase que inventes tu (por ejemplo `jarvis-clave-casa-2026`).
    - `NGROK_DOMINIO`: tu dominio de ngrok del paso 5.
-   - Opcionales: `WHATSAPP_WABA_ID` (para que el diagnostico compruebe la plantilla), `WHATSAPP_PLANTILLA`
-     (por defecto `aviso_jarvis`), `WHATSAPP_AVISO_MIN` (minutos de antelacion de los avisos de citas, 15),
-     `WHATSAPP_PUERTO` (8766) y `WHATSAPP_API_VERSION`. Hay ejemplos en `.env.example`.
+   - Opcional: `WHATSAPP_WABA_ID` (para que el diagnostico compruebe la plantilla). Hay un ejemplo en `.env.example`.
+   - Ajustes opcionales, que van en `ajustes.env` (no en `.env`): `WHATSAPP_PLANTILLA` (por defecto `aviso_jarvis`),
+     `WHATSAPP_AVISO_MIN` (minutos de antelacion de los avisos de citas, 15), `WHATSAPP_PUERTO` (8766) y
+     `WHATSAPP_API_VERSION`. Solo hace falta tocarlos si cambias algo.
 2. Cierra y abre Jarvis con `jarvis.bat`. Al arrancar abre el receptor y ngrok por su cuenta, y los cierra
    al salir.
 3. En developers.facebook.com, en tu app, entra en la configuracion de WhatsApp (*WhatsApp > Configuration*),
