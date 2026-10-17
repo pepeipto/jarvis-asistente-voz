@@ -35,7 +35,11 @@ Ejemplos:
 - "Jarvis, programa un script en Documentos\proyectos\fotos que renombre las fotos por fecha, con pruebas."
   Modo programador (v1.7): Claude Code escribe el codigo, lo ejecuta, pasa las pruebas y hace commits en una
   rama nueva (nunca sube nada a internet). Despues: "Jarvis, ahora añade que tambien ordene por carpetas"
-  continua la misma tarea con todo lo que ya sabe. Siempre te pide "si" antes de empezar.
+  continua la misma tarea con todo lo que ya sabe. Te pide "si" antes de empezar (v1.10: se quita con
+  `TAREAS_CONFIRMAR=0` en ajustes.env; por WhatsApp siempre lo pide).
+- Claude Code puede trabajar en tus carpetas, en el segundo cerebro y en el propio Jarvis: "Jarvis, encarga
+  una tarea en el cerebro: resume mis notas de esta semana". Nunca puede leer los .env, los permisos de
+  Google ni tus claves SSH, y no borra archivos.
 
 ## Velocidad con Claude en la nube (v1.5, 16/10/2026)
 Tiempo hasta la primera palabra de la respuesta, 10 frases reales: **0,93 s de media** (0,74 s el mejor

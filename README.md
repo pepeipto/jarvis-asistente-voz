@@ -89,6 +89,10 @@ empieza a hablar.
 Fuera del repositorio (ver `.gitignore`): `.env` (claves), `google/` (permisos de Google), `cerebro/`
 (tus notas), registros y entornos. El registro de errores no guarda lo que dices, ni correos ni notas.
 
+## Versión 1.10
+Claude Code trabaja en tus carpetas, el segundo cerebro y el propio Jarvis (sin tocar nunca los .env ni
+las claves); el «sí» por voz se puede quitar con `TAREAS_CONFIRMAR=0`.
+
 ## Versión 1.9
 Cadena de proveedores gratuitos: si Claude se agota, responde Gemini o GPT gratis por OmniRoute; nunca dice
 que ha hecho algo que falló. Guía para añadir más proveedores gratis en [LEEME.md](LEEME.md).

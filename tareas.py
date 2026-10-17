@@ -26,7 +26,22 @@ from pathlib import Path
 import pc
 
 PERMITIDAS = ["Read", "Glob", "Grep", "Edit", "Write", "WebSearch", "WebFetch",
-              "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"]
+              "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+              "Bash(mv:*)", "Bash(cp:*)", "Bash(mkdir:*)", "Bash(ls:*)"]     # organizar archivos, sin borrar
+CARPETA_JARVIS = Path(__file__).resolve().parent
+
+
+def _regla(ruta):
+    """Ruta absoluta en el formato de las reglas de Claude Code: E:\\jarvis\\google -> //e/jarvis/google.
+    (Medido el 17/10/2026: "**/.env" solo cuenta desde la carpeta de trabajo; "//E:/..." no funciona.)"""
+    p = Path(ruta).resolve()
+    return "//" + p.drive.rstrip(":").lower() + p.as_posix()[len(p.drive):]
+
+
+# Nunca: ningun .env, los permisos de Google de Jarvis, claves SSH ni la configuracion de Claude Code
+_GOOGLE = _regla(CARPETA_JARVIS / "google")
+PROHIBIDAS = ["Read(//**/.env)", "Edit(//**/.env)", "Write(//**/.env)", f"Read({_GOOGLE}/**)",
+              f"Edit({_GOOGLE}/**)", "Read(~/.ssh/**)", "Edit(~/.claude/**)", "Write(~/.claude/**)"]
 # Modo programador: lo necesario para programar como Claude Code (probar, instalar, versionar en local)
 PERMITIDAS_PROGRAMAR = PERMITIDAS + [
     "TodoWrite", "NotebookEdit",
@@ -98,7 +113,40 @@ def comando(descripcion, carpeta, programar=False, sesion=None):
         c += ["--resume", sesion]
     if programar:
         c += ["--append-system-prompt", GUIA_PROGRAMAR]
-    return c + ["--allowedTools", *(PERMITIDAS_PROGRAMAR if programar else PERMITIDAS)]
+    c += ["--add-dir", *[str(d) for d in carpetas_de_trabajo()]]      # tus carpetas, el cerebro y Jarvis
+    return c + ["--disallowedTools", *PROHIBIDAS, "--allowedTools", *(PERMITIDAS_PROGRAMAR if programar else PERMITIDAS)]
+
+
+def carpetas_de_trabajo():
+    """Donde puede trabajar Claude Code: tus carpetas permitidas, el segundo cerebro y el propio Jarvis."""
+    import memoria
+    vistas = []
+    for d in [*pc.carpetas_permitidas(), memoria.BASE, CARPETA_JARVIS]:
+        d = Path(d).resolve()
+        if d.is_dir() and d not in vistas:
+            vistas.append(d)
+    return vistas
+
+
+_ALIAS = {"cerebro": "cerebro", "segundo cerebro": "cerebro", "mis notas": "cerebro", "notas": "cerebro",
+          "jarvis": "jarvis", "proyecto jarvis": "jarvis", "codigo de jarvis": "jarvis", "tu codigo": "jarvis"}
+
+
+def _destino(carpeta):
+    """Carpeta de trabajo pedida: alias (cerebro, jarvis) o una ruta dentro de las carpetas de trabajo."""
+    import memoria
+    alias = _ALIAS.get(pc._norm(carpeta).strip(" .").removeprefix("el ").removeprefix("la "))
+    if alias:
+        return memoria.BASE if alias == "cerebro" else CARPETA_JARVIS
+    try:
+        destino = pc.ruta_segura(carpeta)
+    except PermissionError:
+        ruta = Path(os.path.expandvars(os.path.expanduser(str(carpeta).strip().strip('"')))).resolve()
+        extra = [Path(memoria.BASE).resolve(), CARPETA_JARVIS]
+        if not any(ruta == b or b in ruta.parents for b in extra):
+            raise
+        destino = ruta
+    return destino if destino.is_dir() else destino.parent
 
 
 def _con_proxy():
@@ -228,7 +276,7 @@ def respuesta_confirmacion(texto, estricto=False):
     return None
 
 
-def encargar_tarea(descripcion, carpeta="", programar=False, continuar=False):
+def encargar_tarea(descripcion, carpeta="", programar=False, continuar=False, siempre_confirmar=False):
     global _pendiente
     descripcion = (descripcion or "").strip()
     if not descripcion:
@@ -245,12 +293,15 @@ def encargar_tarea(descripcion, carpeta="", programar=False, continuar=False):
         sesion, destino = _ultima_sesion["id"], Path(_ultima_sesion["carpeta"])
         programar = programar or _ultima_sesion["programar"]
     elif carpeta:
-        destino = pc.ruta_segura(carpeta)
-        if not destino.is_dir():
-            destino = destino.parent
+        destino = _destino(carpeta)
     else:
         destino = Path(CARPETA_DEFECTO)
         destino.mkdir(parents=True, exist_ok=True)
+    if not siempre_confirmar and (os.environ.get("TAREAS_CONFIRMAR") or "1").strip() == "0":
+        if not ejecutable():                      # TAREAS_CONFIRMAR=0 (ajustes.env): sin pedir el "si"
+            return "No encuentro Claude Code instalado. Instálalo con: npm install -g @anthropic-ai/claude-code"
+        _lanzar(descripcion, destino, programar=bool(programar), sesion=sesion)
+        return f"Me pongo con ello: «{descripcion}», en la carpeta {destino.name}. Te aviso cuando termine."
     _pendiente = {"descripcion": descripcion, "carpeta": destino, "momento": time.time(),
                   "programar": bool(programar), "sesion": sesion}
     verbo = "programe" if programar else "haga"
@@ -318,7 +369,8 @@ def ejecutar(nombre, args):
     try:
         if nombre == "encargar_tarea":
             return encargar_tarea(args.get("descripcion", ""), args.get("carpeta") or "",
-                                  programar=_si(args.get("programar")), continuar=_si(args.get("continuar")))
+                                  programar=_si(args.get("programar")), continuar=_si(args.get("continuar")),
+                                  siempre_confirmar=args.get("siempre_confirmar") is True)
         if nombre == "estado_tarea":
             return estado_tarea()
         if nombre == "cancelar_tarea":

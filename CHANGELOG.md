@@ -10,6 +10,27 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.10.0] - 17/10/2026 - Claude Code con acceso a tus carpetas
+**Por qué:** pediste por voz «crea notas de todas mis conversaciones» y la tarea falló: Claude Code solo
+podía tocar `Documentos\Jarvis\tareas`. Querías que Jarvis pudiera usar Claude Code él solo con lo que pidas.
+
+- **Carpetas de trabajo:** Claude Code puede leer y escribir en tus carpetas (Escritorio, Documentos,
+  Descargas, Imágenes, Música, Vídeos, OneDrive), en el **segundo cerebro** y en el **propio Jarvis** (para
+  mejorarse a sí mismo en modo programador). Se puede pedir «en el cerebro» o «en Jarvis».
+- **Tareas normales:** además de leer y editar, pueden mover, copiar y crear carpetas. Borrar sigue sin estar
+  permitido.
+- **Protegido siempre:** ningún `.env`, los permisos de Google de Jarvis, `~/.ssh` ni la configuración de
+  Claude Code. Medido: la regla `**/.env` no protegía rutas fuera de la carpeta de trabajo (Claude Code leyó
+  el `.env` de Jarvis en la prueba); con `//**/.env` sí queda bloqueado.
+- **Sin pedir el «sí» si lo quieres:** `TAREAS_CONFIRMAR=0` en `ajustes.env` lanza las tareas de voz al
+  momento. Por defecto sigue pidiéndolo. Por WhatsApp siempre lo pide, y el bloqueo de 3 min tras leer
+  correos o internet se mantiene.
+- **Notas en el cerebro:** `cerebro/notas/Claude/` tiene 14 notas (una por conversación, archivos, pendientes)
+  y `cerebro/documentos/proyecto-jarvis/` copias del CHANGELOG, el LEEME y los diseños.
+
+**Comprobado:** 176 pruebas automáticas; tareas reales: leyó la nota de pendientes del cerebro y escribió un
+resumen, contó bien sus 7 pendientes, y un `.env` de prueba quedó bloqueado.
+
 ## [1.9.0] - 17/10/2026 - Cadena de proveedores gratuitos
 **Por qué:** gastar menos y que Jarvis no se quede sin cerebro si Claude se agota.
 
