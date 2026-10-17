@@ -9,7 +9,8 @@ Parte 1: envio de mensajes.
 
 Parte 2: receptor del webhook (HTTP solo en 127.0.0.1; ngrok lo expone a internet).
 - Toda peticion POST debe traer la firma X-Hub-Signature-256 (HMAC-SHA256 del cuerpo con el secreto de la app).
-- Solo se atienden los mensajes de WHATSAPP_MI_NUMERO; los de cualquier otro numero se descartan sin rastro.
+- Solo se atienden los mensajes de WHATSAPP_MI_NUMERO; los de cualquier otro numero se descartan sin responder
+  y solo se anota el hecho (nunca el numero ni el texto).
 - Cada mensaje se atiende una vez (id) y como mucho 20 por minuto.
 
 Seguridad:
@@ -42,7 +43,7 @@ MAX_PLANTILLA = 1000            # maximo de caracteres del parametro de la plant
 MAX_ENVIADOS = 50               # mensajes recordados para poder reenviarlos con plantilla
 PUERTO_DEFECTO = 8766
 MAX_POR_MINUTO = 20             # mensajes tuyos que se atienden por minuto
-MAX_VISTOS = 500                # ids de mensajes recordados para no atender dos veces el mismo
+MAX_VISTOS = 200               # ids de mensajes recordados para no atender dos veces el mismo
 MAX_CUERPO = 1_000_000          # bytes maximos de una peticion
 ERROR_FUERA_DE_VENTANA = 131047 # Meta: no se puede mandar texto libre fuera de las 24 h
 AVISO_NO_TEXTO = "Por ahora solo leo texto."
@@ -297,21 +298,27 @@ def _admitir(id_msg) -> bool:
     ahora = time.time()
     with _cerrojo:
         if id_msg in _vistos:
-            return False
+            return False                                # repetido: en silencio
         while _momentos and ahora - _momentos[0] >= 60:
             _momentos.popleft()
         if len(_momentos) >= MAX_POR_MINUTO:
-            return False
-        _momentos.append(ahora)
-        _vistos[id_msg] = True
-        while len(_vistos) > MAX_VISTOS:
-            _vistos.popitem(last=False)
+            limite = True
+        else:
+            limite = False
+            _momentos.append(ahora)
+            _vistos[id_msg] = True
+            while len(_vistos) > MAX_VISTOS:
+                _vistos.popitem(last=False)
+    if limite:
+        registro.info("whatsapp", "limite por minuto alcanzado: mensaje descartado")
+        return False
     return True
 
 
 def _atender_mensaje(m, mio):
     if not mio or re.sub(r"\D", "", str(m.get("from", ""))) != mio:
-        return                                          # de otro numero: se descarta sin rastro
+        registro.info("whatsapp", "mensaje de un numero ajeno descartado")     # solo el hecho, sin numero ni texto
+        return
     id_msg = m.get("id")
     if not isinstance(id_msg, str) or not id_msg or not _admitir(id_msg):
         return
@@ -396,6 +403,7 @@ def _bucle_despacho():
 
 
 class _Manejador(BaseHTTPRequestHandler):
+    timeout = 10                                        # un cliente que no envia el cuerpo no cuelga el hilo
     def log_message(self, *args):                       # nada en la consola
         pass
 
@@ -414,7 +422,11 @@ class _Manejador(BaseHTTPRequestHandler):
         if largo < 0 or largo > MAX_CUERPO:
             self._responder(413, b"demasiado grande")
             return
-        cuerpo = self.rfile.read(largo) if largo else b""
+        try:
+            cuerpo = self.rfile.read(largo) if largo else b""
+        except OSError:                                 # el cliente no envio el cuerpo a tiempo: se corta
+            self.close_connection = True
+            return
         try:
             codigo, resp = procesar_peticion(metodo, self.path, dict(self.headers.items()), cuerpo)
         except Exception as e:

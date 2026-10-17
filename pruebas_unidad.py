@@ -654,6 +654,7 @@ class WhatsAppReceptor(_BaseWhatsApp):
         self.assertFalse(self.whatsapp.en_ventana())
         self.registro.info("prueba", "fin")        # garantiza que el archivo existe
         log = self.registro.ARCHIVO.read_text(encoding="utf-8")
+        self.assertIn("numero ajeno descartado", log)
         self.assertNotIn("34999999999", log)
         self.assertNotIn("secreto-ajeno", log)
 
@@ -669,6 +670,52 @@ class WhatsAppReceptor(_BaseWhatsApp):
             self.post(self.carga([self.texto(f"m{i}", id_=f"wamid.{i}")]))
         self.whatsapp._despachar()
         self.assertEqual(len(self.entregados), 20)
+        log = self.registro.ARCHIVO.read_text(encoding="utf-8")
+        self.assertEqual(log.count("limite por minuto"), 5)
+        self.assertNotIn("m24", log)
+
+    def test_repetido_no_se_anota(self):
+        carga = self.carga([self.texto("hola")])
+        self.post(carga)
+        self.post(carga)
+        self.assertFalse(self.registro.ARCHIVO.exists())
+
+    def test_vistos_maximo_200(self):
+        for i in range(230):
+            self.whatsapp._momentos.clear()
+            self.post(self.carga([self.texto("x", id_=f"wamid.{i}")]))
+        self.assertEqual(len(self.whatsapp._vistos), 200)
+
+    def test_cliente_sin_cuerpo_se_corta(self):
+        import socket
+        import time
+        puerto = self._puerto_libre()
+        self.os.environ["WHATSAPP_PUERTO"] = str(puerto)
+        antes = self.whatsapp._Manejador.timeout
+        self.whatsapp._Manejador.timeout = 1
+        try:
+            self.assertTrue(self.whatsapp.iniciar_receptor())
+            c = socket.create_connection(("127.0.0.1", puerto), timeout=12)
+            c.sendall(b"POST /whatsapp HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n")
+            t0 = time.time()
+            try:
+                datos = c.recv(1024)                     # el servidor debe cerrar: b"" (o error de conexion)
+            except OSError:
+                datos = b""
+            self.assertEqual(datos, b"")
+            self.assertLess(time.time() - t0, 6)
+            c.close()
+        finally:
+            self.whatsapp._Manejador.timeout = antes
+            self.whatsapp.parar_receptor()
+
+    def _puerto_libre(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        p = s.getsockname()[1]
+        s.close()
+        return p
 
     def test_varios_mensajes_y_solo_estados(self):
         carga = {"object": "whatsapp_business_account", "entry": [
