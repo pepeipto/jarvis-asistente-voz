@@ -44,7 +44,7 @@ out(f"Diagnostico de Jarvis - {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(RAIZ / ".env")
+    load_dotenv(RAIZ / ".env", override=True)
     load_dotenv(RAIZ / "ajustes.env")    # igual que jarvis.py: .env manda, ajustes.env completa
 except Exception as e:
     out("No se pudo cargar .env:", e)

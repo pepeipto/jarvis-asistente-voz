@@ -10,6 +10,39 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.8.0] - 17/10/2026 - Arranque a prueba de fallos e internet de verdad
+**Por qué:** «falla cada vez que lo enciendo» y «no sabe nada actual». Se reprodujo y había cinco causas.
+
+**Arranque y cerebro:**
+- **OmniRoute cerrado = Jarvis tonto.** Si OmniRoute no estaba abierto, Jarvis usaba siempre el modelo local
+  pequeño (granite 8B). Ahora **Jarvis abre OmniRoute solo** al arrancar (sin ventana, ~5 s), lo vigila cada
+  minuto (si se cae, lo reabre) y al salir cierra solo el que abrió él (`omniroute.py`).
+- **Se quedaba callado.** Si la IA devolvía una respuesta vacía, Jarvis no decía nada (visto en tu sesión de
+  las 21:03). Ahora una respuesta vacía cuenta como fallo y pasa al siguiente cerebro; si fallan todos, lo dice.
+- **Sin saldo o clave mala:** ese proveedor se aparta 10 min en vez de reintentarlo (y esperar) en cada pregunta.
+- **API directa de Anthropic bien detectada:** `api.anthropic.com` ya no se trata como un proxy (antes le
+  mandaba el token de OmniRoute y fallaba siempre). El `.env` manda sobre variables de fuera.
+- Si la nube no responde al arrancar, deja cargado el modelo local para que la primera respuesta no tarde.
+
+**Internet (busca sin preguntar):**
+- **Buscador de Claude:** el cerebro en la nube usa la búsqueda web de Anthropic (todo internet, con
+  fuentes) a través de OmniRoute. Mientras busca, Jarvis dice «Déjame mirar». Medido: noticias, F1, precios y
+  tiempo con datos reales en 3-5 s.
+- **DuckDuckGo había puesto un reto anti-robots** y Jarvis lo tomaba por «no hay resultados». Ahora: versión
+  lite → versión HTML → Wikipedia (nunca se intenta resolver un reto), y si no hay nada, lo dice y prueba otra vía.
+- **Nuevas herramientas:** `leer_web` (lee una página; nunca este PC ni tu red local, ni tras redirecciones)
+  y `tiempo` (Open-Meteo, gratis y sin clave: ahora y 3 días).
+- **Prompt:** busca siempre que haga falta, sin pedir permiso; nunca dice «no tengo acceso a internet».
+- **Ya no «confiesa» inventos que no hizo:** antes Jarvis guardaba solo el texto final y, en la siguiente
+  pregunta, Claude veía citas sin búsqueda y decía haberlas inventado. Ahora se guarda la búsqueda real.
+- **Seguridad:** lo que Claude lee en internet activa las mismas cautelas que `buscar_web` (3 min sin
+  encargar tareas ni abrir enlaces), y todo llega marcado como contenido no fiable.
+
+**Comprobado:** 161 pruebas automáticas (24 nuevas); arranque real de `jarvis.py` 3 de 3 sin errores
+(OmniRoute abierto solo, Claude listo en 5-7 s); conversación real de 6 preguntas con internet, primera
+palabra en 1-2 s, sin autocorrecciones falsas.
+**Sin comprobar todavía:** una conversación hablada larga con tu voz.
+
 ## [1.7.0] - 17/10/2026 - Oído fiable y Jarvis programador
 **Por qué:** a veces Jarvis no escuchaba. Se reprodujo en este PC y se encontraron tres causas.
 
