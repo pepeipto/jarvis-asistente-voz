@@ -132,7 +132,7 @@ def bench():
         import jarvis  # usa el prompt y las herramientas reales
         sistema_txt = jarvis.system_prompt()
         tools = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
-                                                   "parameters": t["input_schema"]}} for t in jarvis.TOOLS]
+                                                   "parameters": t["input_schema"]}} for t in jarvis.herramientas()]
     except Exception as e:
         out("No se pudo importar jarvis.py:", e)
         sistema_txt, tools = "Eres Jarvis. Responde en español.", []
