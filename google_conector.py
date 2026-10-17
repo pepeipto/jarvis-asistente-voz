@@ -182,6 +182,26 @@ def calendario_crear(titulo, inicio, fin="", duracion_min=60, descripcion="", lu
     return f"Añadido a tu calendario: {titulo.strip()}, {cuando}."
 
 
+def eventos_proximos(minutos):
+    """Eventos con hora que empiezan entre ahora y ahora+minutos: [{"id", "titulo", "inicio" (datetime local sin zona)}]."""
+    ahora = datetime.now()
+    fin = ahora + timedelta(minutes=max(1, int(minutos)))
+    params = dict(calendarId="primary", timeMin=ahora.astimezone().isoformat(), timeMax=fin.astimezone().isoformat(),
+                  singleEvents=True, orderBy="startTime", maxResults=20)
+    items = _servicio("calendar").events().list(**params).execute().get("items", [])
+    salida = []
+    for ev in items:
+        try:
+            ini, todo = _fecha_evento(ev.get("start", {}))
+        except (KeyError, ValueError):
+            continue
+        ini = ini.replace(tzinfo=None)
+        if todo or not (ahora - timedelta(seconds=30) <= ini <= fin):
+            continue
+        salida.append({"id": ev.get("id", ""), "titulo": ev.get("summary") or "(sin título)", "inicio": ini})
+    return salida
+
+
 # ------------------------------------------------------------------ correo
 def correo_buscar(consulta="", maximo=8, solo_no_leidos=False):
     q = consulta.strip() or "in:inbox"

@@ -897,5 +897,101 @@ class WhatsAppRecordatorios(_BaseWhatsApp):
         self.assertIsNone(self.whatsapp.ejecutar("guardar_nota", {}))
 
 
+class WhatsAppCitas(_BaseWhatsApp):
+    """whatsapp.py + google_conector.py: aviso de citas proximas."""
+
+    def setUp(self):
+        super().setUp()
+        import google_conector
+        self.gc = google_conector
+        self.antes_pruebas = dict(google_conector._pruebas)
+        self.os.environ.pop("WHATSAPP_AVISO_MIN", None)
+
+    def tearDown(self):
+        self.gc._pruebas.clear()
+        self.gc._pruebas.update(self.antes_pruebas)
+        self.os.environ.pop("WHATSAPP_AVISO_MIN", None)
+        super().tearDown()
+
+    def _ev(self, minutos=12, id="e1"):
+        from datetime import datetime, timedelta
+        ini = (datetime.now() + timedelta(minutes=minutos)).replace(second=0, microsecond=0)
+        return {"id": id, "titulo": "Dentista", "inicio": ini}
+
+    def test_eventos_proximos_sin_dia_completo(self):
+        from datetime import datetime, timedelta
+        ini = (datetime.now() + timedelta(minutes=10)).replace(microsecond=0)
+        items = [{"id": "a", "summary": "Reunion", "start": {"dateTime": ini.astimezone().isoformat()}},
+                 {"id": "b", "summary": "Festivo", "start": {"date": ini.strftime("%Y-%m-%d")}}]
+        pedidos = []
+
+        class Lista:
+            def execute(s):
+                return {"items": items}
+
+        class Eventos:
+            def list(s, **params):
+                pedidos.append(params)
+                return Lista()
+
+        class Servicio:
+            def events(s):
+                return Eventos()
+        self.gc._pruebas["calendar"] = Servicio()
+        r = self.gc.eventos_proximos(15)
+        self.assertEqual(len(r), 1)
+        self.assertEqual(r[0]["id"], "a")
+        self.assertEqual(r[0]["titulo"], "Reunion")
+        self.assertIsInstance(r[0]["inicio"], datetime)
+        self.assertEqual(r[0]["inicio"], ini)
+        self.assertEqual(len(pedidos), 1)
+
+    def test_cita_avisada_una_vez(self):
+        ev = self._ev(12)
+        self.assertEqual(self.whatsapp.revisar_citas([ev]), 1)
+        self.assertEqual(self.whatsapp.revisar_citas([ev]), 0)
+        self.assertEqual(len(self.llamadas), 1)
+        texto = str(self.llamadas[0]["json"])
+        self.assertIn("Dentista", texto)
+        self.assertIn(f"{ev['inicio']:%H:%M}", texto)
+        self.assertIn("En 12 min", texto)
+
+    def test_no_repite_tras_reinicio(self):
+        ev = self._ev()
+        self.assertEqual(self.whatsapp.revisar_citas([ev]), 1)
+        self.whatsapp._cache_estado = None
+        self.assertEqual(self.whatsapp.revisar_citas([ev]), 0)
+
+    def test_cita_movida_avisa_de_nuevo(self):
+        self.assertEqual(self.whatsapp.revisar_citas([self._ev(12)]), 1)
+        self.assertEqual(self.whatsapp.revisar_citas([self._ev(14)]), 1)
+
+    def test_limpia_antiguas(self):
+        import time
+        w = self.whatsapp
+        d = w._leer_estado()
+        d["citas_avisadas"] = {"viejo|2026-01-01T10:00:00": time.time() - 25 * 3600}
+        w._guardar_estado(d)
+        w.revisar_citas([])
+        self.assertEqual(w._leer_estado()["citas_avisadas"], {})
+
+    def test_fallo_de_envio_no_marca_avisada(self):
+        def malo(url, json, headers):
+            raise RuntimeError("sin red")
+        self.whatsapp._post = malo
+        ev = self._ev()
+        self.assertEqual(self.whatsapp.revisar_citas([ev]), 0)
+        self.assertEqual(self.whatsapp._leer_estado()["citas_avisadas"], {})
+
+    def test_aviso_min(self):
+        w, e = self.whatsapp, self.os.environ
+        self.assertEqual(w.aviso_min(), 15)
+        e["WHATSAPP_AVISO_MIN"] = "30"
+        self.assertEqual(w.aviso_min(), 30)
+        for malo in ("abc", "0", "-5", ""):
+            e["WHATSAPP_AVISO_MIN"] = malo
+            self.assertEqual(w.aviso_min(), 15)
+
+
 if __name__ == "__main__":
     unittest.main()
