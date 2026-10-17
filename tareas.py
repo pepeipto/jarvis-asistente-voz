@@ -32,6 +32,10 @@ LOG = Path(__file__).resolve().with_name("tareas_log.txt")
 
 _SI = re.compile(r"^(s[ií]|adelante|vale|hazlo|confirmo|confirmado|de acuerdo|ok|okey|venga|claro|dale|empieza)\b")
 _NO = re.compile(r"^(no|cancela\w*|espera|para|d[eé]jalo|olv[ií]dalo|mejor no)\b")
+# Por WhatsApp solo vale una afirmacion sin mas (frase ya normalizada): "vale, pero..." no es un si
+_SI_ESTRICTO = re.compile(r"^(si|vale|ok|okey|adelante|hazlo|confirmo|confirmado|de acuerdo|venga|claro|dale|"
+                          r"empieza|si,? (mandalo|envialo|hazlo|adelante))(,? por favor)?$")
+_CONDICION = re.compile(r"\b(no|pero)\b")
 
 _pendiente = None               # {"descripcion", "carpeta", "momento"}
 _actual = None                  # {"descripcion", "carpeta", "inicio", "proceso"}
@@ -131,17 +135,29 @@ def _lanzar(descripcion, carpeta):
     threading.Thread(target=_trabajar, args=(descripcion, carpeta), daemon=True, name="tarea").start()
 
 
-def respuesta_confirmacion(texto):
+def frase_normalizada(texto):
+    """Frase del usuario sin acentos, sin la palabra de activacion y sin signos en los bordes."""
+    t = pc._norm(texto)
+    t = re.sub(r"^(oye |eh )?(jarvis|carvis|yarvis|jarbis)[\s,.:;!¡¿?]*", "", t)
+    return t.strip(" ,.!¡¿?")
+
+
+def es_si_estricto(t):
+    """True si la frase normalizada es solo una afirmacion, sin condiciones ni negaciones."""
+    return bool(_SI_ESTRICTO.match(t)) and not _CONDICION.search(t)
+
+
+def respuesta_confirmacion(texto, estricto=False):
     """Si hay una tarea esperando confirmacion, decide con la frase del usuario.
-    Devuelve el texto a decir, o None si no hay nada pendiente (o la frase es otra peticion)."""
+    Devuelve el texto a decir, o None si no hay nada pendiente (o la frase es otra peticion).
+    estricto=True (WhatsApp): solo vale un si sin mas; la voz usa el reconocimiento por prefijo."""
     global _pendiente
     p = pendiente()
     if not p:
         return None
-    t = pc._norm(texto)
-    t = re.sub(r"^(oye |eh )?(jarvis|carvis|yarvis|jarbis)[\s,.:;!¡¿?]*", "", t).strip(" ,.!¡¿?")
+    t = frase_normalizada(texto)
     _pendiente = None
-    if _SI.match(t):
+    if es_si_estricto(t) if estricto else _SI.match(t):
         if not ejecutable():
             return "No encuentro Claude Code instalado. Instálalo con: npm install -g @anthropic-ai/claude-code"
         _lanzar(p["descripcion"], p["carpeta"])

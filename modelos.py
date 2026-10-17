@@ -71,7 +71,7 @@ def main():
     sistema = jarvis.SYSTEM_PROMPT_BASE.replace("@@FECHA@@", "jueves 16 de octubre de 2026, 00:30") \
         if "@@FECHA@@" in jarvis.SYSTEM_PROMPT_BASE else jarvis.system_prompt()
     tools = [{"type": "function", "function": {"name": t["name"], "description": t["description"],
-                                               "parameters": t["input_schema"]}} for t in jarvis.TOOLS]
+                                               "parameters": t["input_schema"]}} for t in jarvis.herramientas()]
     out("\n1. DESCARGAS")
     disponibles = [m for m in CANDIDATOS if descargar(m)]
     out("\n2. PRUEBAS (herramienta elegida / tiempo / velocidad)")
