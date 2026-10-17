@@ -737,6 +737,63 @@ class EncargarTareas(unittest.TestCase):
         self.assertNotIn("Bash(python:*)", c)
         self.assertNotIn("--resume", c)
 
+    # ---- v1.10: Claude Code con acceso a tus carpetas, al cerebro y a Jarvis
+    def test_comando_da_acceso_a_tus_carpetas_cerebro_y_jarvis(self):
+        import memoria
+        c = self.t.comando("ordena", self.tmp)
+        i = c.index("--add-dir")
+        dirs = c[i + 1:c.index("--allowedTools")]
+        dirs = dirs[:dirs.index("--disallowedTools")] if "--disallowedTools" in dirs else dirs
+        self.assertIn(str(self.tmp), dirs)                       # CARPETAS_PERMITIDAS de la prueba
+        self.assertIn(str(memoria.BASE), dirs)
+        self.assertIn(str(self.t.CARPETA_JARVIS), dirs)
+
+    def test_protege_claves_y_permisos(self):
+        c = self.t.comando("x", self.tmp, programar=True)
+        prohibidas = c[c.index("--disallowedTools") + 1:c.index("--allowedTools")]
+        google = "//" + str(self.t.CARPETA_JARVIS)[0].lower() + self.t.CARPETA_JARVIS.as_posix()[2:] + "/google/**"
+        for p in ("Read(//**/.env)", "Edit(//**/.env)", f"Read({google})", "Read(~/.ssh/**)", "Edit(~/.claude/**)"):
+            self.assertIn(p, prohibidas)
+        self.assertEqual(self.t._regla(r"E:\jarvis\google"), "//e/jarvis/google")
+
+    def test_tareas_normales_pueden_mover_y_copiar_pero_no_borrar(self):
+        for h in ("Bash(mv:*)", "Bash(cp:*)", "Bash(mkdir:*)", "Bash(ls:*)"):
+            self.assertIn(h, self.t.PERMITIDAS)
+        self.assertFalse([p for p in self.t.PERMITIDAS_PROGRAMAR if p.startswith(("Bash(rm", "Bash(del"))])
+
+    def test_puede_trabajar_en_el_cerebro_y_en_jarvis(self):
+        import memoria
+        self.t.ejecutar("encargar_tarea", {"descripcion": "resume mis notas", "carpeta": "segundo cerebro"})
+        self.assertEqual(self.t.pendiente()["carpeta"], memoria.BASE)
+        self.t._pendiente = None
+        self.t.ejecutar("encargar_tarea", {"descripcion": "mejora tu codigo", "carpeta": "jarvis",
+                                           "programar": True})
+        self.assertEqual(self.t.pendiente()["carpeta"], self.t.CARPETA_JARVIS)
+
+    def test_sin_confirmar_si_lo_pido(self):
+        self.os.environ["TAREAS_CONFIRMAR"] = "0"
+        try:
+            r = self.t.ejecutar("encargar_tarea", {"descripcion": "ordena descargas"})
+            self.assertIn("Me pongo con ello", r)
+            self.assertEqual(self.lanzadas, [("ordena descargas", self.tmp)])
+            self.t.marcar_contenido_externo()                    # el bloqueo tras leer internet sigue
+            self.t._actual = None
+            self.assertIn("pídemelo", self.t.ejecutar("encargar_tarea", {"descripcion": "otra"}).lower())
+        finally:
+            self.os.environ.pop("TAREAS_CONFIRMAR")
+            self.t._actual = None
+
+    def test_por_whatsapp_siempre_pide_el_si(self):
+        import whatsapp_canal
+        self.os.environ["TAREAS_CONFIRMAR"] = "0"
+        try:
+            canal = whatsapp_canal.Canal(lambda n, a: self.t.ejecutar(n, a))
+            canal.run_tool("encargar_tarea", {"descripcion": "ordena descargas"})
+            self.assertEqual(self.lanzadas, [])
+            self.assertIsNotNone(self.t.pendiente())
+        finally:
+            self.os.environ.pop("TAREAS_CONFIRMAR")
+
     def test_entorno_y_modelo_segun_proxy_o_api_directa(self):
         claves = ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY")
         antes = {k: self.os.environ.get(k) for k in claves}
@@ -1721,7 +1778,7 @@ class WhatsAppCanal(unittest.TestCase):
         self.t._lanzar = lambda d, c, **k: None
         self.t.ejecutable = lambda: "claude.exe"
         r = self.canal.run_tool("encargar_tarea", {"descripcion": "x"})
-        self.assertEqual(self.llamadas, [("encargar_tarea", {"descripcion": "x"})])
+        self.assertEqual(self.llamadas, [("encargar_tarea", {"descripcion": "x", "siempre_confirmar": True})])
         self.assertIsNone(self.canal.pendiente())
         self.t._pendiente = {"descripcion": "x", "carpeta": "c", "momento": self.time.time()}
         self.assertEqual(self.canal.antes_de_la_ia("sí"), "Me pongo con ello. Te aviso cuando termine.")

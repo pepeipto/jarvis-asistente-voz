@@ -44,6 +44,8 @@ class Canal:
             self._pendiente = {"nombre": nombre, "args": args, "momento": time.time()}
             return ("Pendiente de confirmación: resume al usuario exactamente lo que se va a hacer "
                     f"({nombre} con {json.dumps(args, ensure_ascii=False)}) y pídele que conteste sí.")
+        if nombre == "encargar_tarea":      # desde el movil, una tarea siempre pide el "si" (aunque TAREAS_CONFIRMAR=0)
+            args = {**args, "siempre_confirmar": True}
         return self._run(nombre, args)
 
     def antes_de_la_ia(self, texto):
