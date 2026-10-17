@@ -131,6 +131,13 @@ def _lanzar(descripcion, carpeta):
     threading.Thread(target=_trabajar, args=(descripcion, carpeta), daemon=True, name="tarea").start()
 
 
+def frase_normalizada(texto):
+    """Frase del usuario sin acentos, sin la palabra de activacion y sin signos en los bordes."""
+    t = pc._norm(texto)
+    t = re.sub(r"^(oye |eh )?(jarvis|carvis|yarvis|jarbis)[\s,.:;!¡¿?]*", "", t)
+    return t.strip(" ,.!¡¿?")
+
+
 def respuesta_confirmacion(texto):
     """Si hay una tarea esperando confirmacion, decide con la frase del usuario.
     Devuelve el texto a decir, o None si no hay nada pendiente (o la frase es otra peticion)."""
@@ -138,8 +145,7 @@ def respuesta_confirmacion(texto):
     p = pendiente()
     if not p:
         return None
-    t = pc._norm(texto)
-    t = re.sub(r"^(oye |eh )?(jarvis|carvis|yarvis|jarbis)[\s,.:;!¡¿?]*", "", t).strip(" ,.!¡¿?")
+    t = frase_normalizada(texto)
     _pendiente = None
     if _SI.match(t):
         if not ejecutable():
