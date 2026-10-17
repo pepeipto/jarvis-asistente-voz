@@ -1230,5 +1230,127 @@ class WhatsAppNgrok(unittest.TestCase):
             requests.get = orig
 
 
+class WhatsAppJarvis(_BaseWhatsApp):
+    """jarvis.py: herramientas, conversacion y avisos graves por WhatsApp."""
+    _NADA = object()
+    GLOBALES = ("canal", "ia_wa", "history_wa", "_ultimo_grave", "ia")
+
+    def setUp(self):
+        super().setUp()
+        import jarvis
+        import tareas
+        import whatsapp_canal
+        self.j, self.tareas, self.wc = jarvis, tareas, whatsapp_canal
+        self.antes_j = {g: getattr(jarvis, g, self._NADA) for g in self.GLOBALES}
+        self.antes_pend = tareas._pendiente
+        tareas._pendiente = None
+        self.antes_recordatorios = self.whatsapp.RECORDATORIOS
+        from pathlib import Path
+        self.whatsapp.RECORDATORIOS = Path(self.tmp) / "whatsapp_recordatorios.json"
+        self.whatsapp.marcar_recibido()           # dentro de la ventana de 24 h: texto libre
+        self.voz = []
+
+        class IAVoz:
+            def responder(s, history, on_texto=None):
+                self.voz.append(history)
+                return "voz"
+        jarvis.ia = IAVoz()
+        jarvis.canal = whatsapp_canal.Canal(jarvis.run_tool)
+        jarvis.ia_wa = llm.IA([], lambda: "", jarvis.canal.run_tool)
+        jarvis.history_wa = []
+        jarvis._ultimo_grave = 0.0
+
+    def tearDown(self):
+        for g, v in self.antes_j.items():
+            if v is self._NADA:
+                if hasattr(self.j, g):
+                    delattr(self.j, g)
+            else:
+                setattr(self.j, g, v)
+        self.tareas._pendiente = self.antes_pend
+        self.whatsapp.RECORDATORIOS = self.antes_recordatorios
+        super().tearDown()
+
+    def _textos(self):
+        import json
+        return [json.dumps(c["json"], ensure_ascii=False) for c in self.llamadas]
+
+    def _ia_dice(self, respuesta):
+        def responder(history, on_texto=None):
+            history.append({"role": "assistant", "content": respuesta})
+            return respuesta
+        self.j.ia_wa.responder = responder
+
+    def test_herramientas_en_tools(self):
+        nombres = [t["name"] for t in self.j.TOOLS]
+        self.assertIn("whatsapp_enviar", nombres)
+        self.assertIn("whatsapp_recordar", nombres)
+        self.j.run_tool("whatsapp_enviar", {"texto": "x"})
+        self.assertEqual(len(self.llamadas), 1)
+        self.assertIn('"x"', self._textos()[0])
+
+    def test_prompt_menciona_whatsapp(self):
+        self.assertIn("WHATSAPP: whatsapp_enviar", self.j.system_prompt())
+
+    def test_ia_whatsapp_filtrada(self):
+        ia = self.j.crear_ia_whatsapp(self.j.canal)
+        nombres = [t["name"] for t in ia.tools]
+        self.assertNotIn("abrir_programa", nombres)
+        self.assertIn("guardar_nota", nombres)
+        self.assertEqual(ia.run_tool, self.j.canal.run_tool)
+        self.assertIn(self.wc.PROMPT_EXTRA, ia.system_fn())
+
+    def test_atender_whatsapp_responde_por_whatsapp(self):
+        self._ia_dice("Hecho.")
+        self.j.atender_whatsapp("apunta comprar pan")
+        self.assertEqual(len(self.llamadas), 1)
+        self.assertIn("Hecho.", self._textos()[0])
+        self.assertEqual(self.j.history_wa, [{"role": "user", "content": "apunta comprar pan"},
+                                             {"role": "assistant", "content": "Hecho."}])
+        self.assertEqual(self.voz, [])            # la IA de voz (y su historial) no se toca
+
+    def test_atender_whatsapp_ia_caida(self):
+        def caida(history, on_texto=None):
+            raise llm.IAError("sin cerebro", "todos los proveedores han fallado")
+        self.j.ia_wa.responder = caida
+        self.j.atender_whatsapp("hola")
+        self.assertTrue(any("Ahora mismo no puedo pensar; inténtalo en un rato." in t for t in self._textos()))
+
+    def test_atender_whatsapp_fallo_inesperado(self):
+        def rota(history, on_texto=None):
+            raise RuntimeError("boom")
+        self.j.ia_wa.responder = rota
+        self.j.atender_whatsapp("mi secreto 1234")      # no debe lanzar
+        self.assertTrue(any("Ahora mismo no puedo pensar" in t for t in self._textos()))
+        log = self.registro.ARCHIVO.read_text(encoding="utf-8")
+        self.assertIn("[whatsapp]", log)
+        self.assertNotIn("mi secreto 1234", log)
+
+    def test_confirmacion_resumida_por_el_codigo(self):
+        args = {"para": "x@y.com", "asunto": "Factura", "texto": "Adjunto"}
+
+        def enganosa(history, on_texto=None):
+            self.j.canal.run_tool("correo_enviar", args)
+            history.append({"role": "assistant", "content": "¿Te pongo una alarma? Di sí."})
+            return "¿Te pongo una alarma? Di sí."
+        self.j.ia_wa.responder = enganosa
+        self.j.atender_whatsapp("manda la factura")
+        enviado = "".join(self._textos())
+        self.assertIn("correo_enviar", enviado)
+        self.assertIn("x@y.com", enviado)
+        self.assertIn("Factura", enviado)
+        self.assertIn("Adjunto", enviado)
+
+    def test_aviso_grave_limitado(self):
+        import time
+        self.j.aviso_grave("algo grave")
+        self.j.aviso_grave("algo grave")
+        self.assertEqual(len(self.llamadas), 1)
+        self.assertIn("⚠️ algo grave", self._textos()[0])
+        self.j._ultimo_grave = time.time() - 31 * 60
+        self.j.aviso_grave("algo grave")
+        self.assertEqual(len(self.llamadas), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
