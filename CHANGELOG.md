@@ -10,6 +10,17 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.4.1] - 17/10/2026 - Soporte para macOS (rama `soporte-mac`)
+- Nuevos scripts `.command` equivalentes a los `.bat` (instalar, jarvis, jarvis_texto, actualizar,
+  diagnostico, conectar_google, modelos, prueba_auto, crear_acceso_directo). El instalador elige el modelo
+  de Ollama según la memoria del Mac y no exige Ollama local si `OLLAMA_URL` apunta a otro equipo.
+- La ventana 3D busca Chrome, Edge o Brave en `/Applications`; Ollama se arranca desde `Ollama.app`.
+- "Abrir aplicación" usa `open -a` en Mac (Calculadora, TextEdit, Finder, Safari, Spotify...).
+- `diagnostico` muestra chip y memoria unificada en Mac en vez de `nvidia-smi`.
+- Mensajes de error con el nombre de script correcto según el sistema (`plataforma.py`).
+- Comprobado: compilación de todos los módulos, importación simulando macOS y sintaxis de los scripts.
+  **Pendiente de probar en un Mac real** (micrófono, ventana 3D, instalación completa).
+
 ## [1.4.0] - 16/10/2026 - Autorreparación y registro de errores
 Aprobadas: P1, P2 y P6.
 

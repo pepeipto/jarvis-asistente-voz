@@ -6,8 +6,8 @@ Conexion de Jarvis con Google Calendar, Gmail y Drive.
 - Drive: buscar archivos, leer su texto y crear Google Docs nuevos.
 Los correos y archivos pueden traer instrucciones maliciosas para una IA: se marcan como DATOS.
 
-Autorizacion (una sola vez): conectar_google.bat -> se abre el navegador -> aceptas -> se guarda
-google\\token.json (tu llave personal; no la compartas). credentials.json identifica la "app" Jarvis.
+Autorizacion (una sola vez): conectar_google (.bat en Windows, .command en Mac) -> se abre el navegador -> aceptas -> se guarda
+google/token.json (tu llave personal; no la compartas). credentials.json identifica la "app" Jarvis.
 """
 import base64
 import html
@@ -16,6 +16,8 @@ import re
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
+
+from plataforma import script
 
 DIR = Path(__file__).resolve().parent / "google"
 CRED = DIR / "credentials.json"
@@ -398,16 +400,16 @@ def ejecutar(nombre, args):
         fn = globals()[nombre]
         return fn(**{k: v for k, v in (args or {}).items() if v not in (None, "")})
     except NoConectado:
-        return ("Error: Google no esta conectado todavia. Hay que ejecutar conectar_google.bat una vez "
-                "(o falta google\\credentials.json).")
+        return (f"Error: Google no esta conectado todavia. Hay que ejecutar {script('conectar_google')} una vez "
+                "(o falta google/credentials.json).")
     except FileNotFoundError:
-        return "Error: falta google\\credentials.json. Hay que configurar la conexion con Google."
+        return "Error: falta google/credentials.json. Hay que configurar la conexion con Google."
     except ImportError:
-        return "Error: faltan los paquetes de Google. Ejecuta actualizar.bat."
+        return "Error: faltan los paquetes de Google. Ejecuta " + script('actualizar') + "."
     except TypeError as e:
         return f"Error: parametros no validos ({e})."
     except Exception as e:
         texto = str(e)
         if "invalid_grant" in texto or "Token has been expired" in texto:
-            return "Error: el permiso de Google ha caducado. Ejecuta conectar_google.bat de nuevo."
+            return f"Error: el permiso de Google ha caducado. Ejecuta {script('conectar_google')} de nuevo."
         return f"Error de Google: {texto[:200]}"

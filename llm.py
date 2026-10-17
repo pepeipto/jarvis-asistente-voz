@@ -14,6 +14,8 @@ import time
 
 import requests
 
+from plataforma import ES_MAC
+
 OLLAMA_URL = (os.getenv("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
 MODELO_SUGERIDO = "granite4.1:8b"   # el instalador elige qwen3.8:27b si la grafica tiene 20 GB o mas
 
@@ -225,7 +227,9 @@ class IA:
         self._ultimo_arranque = time.time()
         import shutil
         import subprocess
-        exe = shutil.which("ollama") or os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")
+        exe = (shutil.which("ollama")
+               or ("/Applications/Ollama.app/Contents/Resources/ollama" if ES_MAC
+                   else os.path.expandvars(r"%LOCALAPPDATA%\Programs\Ollama\ollama.exe")))
         if not os.path.exists(exe):
             return False
         try:

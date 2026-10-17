@@ -1,5 +1,5 @@
 """Conecta Jarvis con tu cuenta de Google (una sola vez) y comprueba que funciona.
-Solo guarda recuentos en google\\estado.txt (nunca el contenido de tus correos o eventos)."""
+Solo guarda recuentos en google/estado.txt (nunca el contenido de tus correos o eventos)."""
 import sys
 import time
 from datetime import datetime, timedelta
@@ -13,7 +13,7 @@ def main():
     g.DIR.mkdir(exist_ok=True)
     salida = g.DIR / "estado.txt"
     if not g.CRED.exists():
-        msg = "FALTA google\\credentials.json: primero hay que crear las credenciales en Google Cloud."
+        msg = "FALTA google/credentials.json: primero hay que crear las credenciales en Google Cloud."
         print(msg)
         salida.write_text(msg + "\n", encoding="utf-8")
         return

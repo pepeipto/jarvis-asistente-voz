@@ -1,7 +1,7 @@
 """
 Prueba de modelos de Ollama para Jarvis: descarga los candidatos que falten y mide, con el prompt
 y las herramientas reales de Jarvis, si eligen la herramienta correcta y a que velocidad.
-Resultado en modelos.txt. Uso: modelos.bat  (o: python modelos.py modelo1 modelo2 ...)
+Resultado en modelos.txt. Uso: modelos.bat / modelos.command  (o: python modelos.py modelo1 modelo2 ...)
 No ejecuta ninguna herramienta (solo comprueba cual elegiria el modelo).
 """
 import json

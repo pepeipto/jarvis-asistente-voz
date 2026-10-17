@@ -7,7 +7,7 @@ Asistente de voz con memoria a largo plazo e interfaz 3D, funcionando en tu PC.
     Lo que recuerda se guarda en cerebro\ como notas de texto (compatibles con Obsidian).
 
 ## Uso diario
-- Doble clic en `jarvis.bat` (o en el acceso directo "Jarvis" del escritorio, si lo creas con
+- Doble clic en `jarvis.bat` (Windows) o `jarvis.command` (Mac) (o en el acceso directo "Jarvis" del escritorio, si lo creas con
   `crear_acceso_directo.bat`).
 - Se abre la ventana 3D. Dile "Jarvis, ..." o escribe en la caja de abajo.
 - Tras una respuesta tienes 10 segundos para seguir hablando sin repetir "Jarvis".

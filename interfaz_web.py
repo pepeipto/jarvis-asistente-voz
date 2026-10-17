@@ -16,12 +16,15 @@ import os
 import queue
 import secrets
 import subprocess
+import tempfile
 import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+from plataforma import ES_MAC
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 PUERTO_BASE = 8765
@@ -221,16 +224,23 @@ class OrbeWeb:
         if os.environ.get("JARVIS_NO_BROWSER"):
             return
         candidatos = []
-        for var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
-            base = os.environ.get(var)
-            if base:
-                b = Path(base)
-                candidatos += [b / "Google/Chrome/Application/chrome.exe",
-                               b / "Microsoft/Edge/Application/msedge.exe",
-                               b / "BraveSoftware/Brave-Browser/Application/brave.exe"]
+        if ES_MAC:
+            for raiz in (Path("/Applications"), Path.home() / "Applications"):
+                candidatos += [raiz / "Google Chrome.app/Contents/MacOS/Google Chrome",
+                               raiz / "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                               raiz / "Brave Browser.app/Contents/MacOS/Brave Browser",
+                               raiz / "Chromium.app/Contents/MacOS/Chromium"]
+        else:
+            for var in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+                base = os.environ.get(var)
+                if base:
+                    b = Path(base)
+                    candidatos += [b / "Google/Chrome/Application/chrome.exe",
+                                   b / "Microsoft/Edge/Application/msedge.exe",
+                                   b / "BraveSoftware/Brave-Browser/Application/brave.exe"]
         exe = next((c for c in candidatos if c.exists()), None)
         if exe:
-            perfil = Path(os.environ.get("TEMP") or os.environ.get("TMPDIR") or ".") / "jarvis-ui-perfil"
+            perfil = Path(os.environ.get("TEMP") or os.environ.get("TMPDIR") or tempfile.gettempdir()) / "jarvis-ui-perfil"
             try:
                 self.proc = subprocess.Popen([
                     str(exe), f"--app={url}", f"--user-data-dir={perfil}", "--window-size=1500,940",
