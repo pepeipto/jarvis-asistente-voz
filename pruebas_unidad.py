@@ -511,6 +511,7 @@ class WhatsAppEnvio(unittest.TestCase):
         self.assertNotIn("\n", t)
         self.assertNotIn("\t", t)
         self.assertNotIn(" " * 5, t)
+        self.assertLessEqual(len(self.whatsapp.texto_plantilla("x" * 3000)), 1000)
 
     def test_numero_normalizado(self):
         self.os.environ["WHATSAPP_MI_NUMERO"] = "+34 600-11 12 22"
@@ -532,6 +533,17 @@ class WhatsAppEnvio(unittest.TestCase):
         self.whatsapp._post = roto
         self.assertFalse(self.whatsapp.enviar("hola"))
         self.assertIn("[whatsapp]", self.registro.ARCHIVO.read_text(encoding="utf-8"))
+
+    def test_enviados_maximo_50(self):
+        import time
+        self.whatsapp.marcar_recibido(time.time())
+        for i in range(55):
+            self.assertTrue(self.whatsapp.enviar(f"m{i}"))
+        self.assertEqual(len(self.whatsapp._enviados), 50)
+        self.assertNotIn("wamid.1", self.whatsapp._enviados)
+        self.assertNotIn("wamid.5", self.whatsapp._enviados)
+        self.assertIn("wamid.6", self.whatsapp._enviados)
+        self.assertIn("wamid.55", self.whatsapp._enviados)
 
     def test_sin_configurar(self):
         self.os.environ.pop("WHATSAPP_TOKEN")
