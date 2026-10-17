@@ -118,38 +118,56 @@ def _url():
 
 # ---------------------------------------------------------------- estado en disco
 
+def _leer_sin_cerrojo() -> dict:
+    """Copia del estado. Llamar con _cerrojo tomado."""
+    global _cache_estado
+    if _cache_estado is None:
+        try:
+            datos = json.loads(ESTADO.read_text(encoding="utf-8"))
+            if not isinstance(datos, dict):
+                datos = {}
+        except (OSError, ValueError):
+            datos = {}
+        datos.setdefault("ultimo_recibido", 0.0)
+        datos.setdefault("citas_avisadas", {})
+        _cache_estado = datos
+    return json.loads(json.dumps(_cache_estado))      # copia: quien llama no toca la cache
+
+
+def _guardar_sin_cerrojo(d: dict):
+    """Llamar con _cerrojo tomado."""
+    global _cache_estado
+    _cache_estado = d
+    try:
+        ESTADO.write_text(json.dumps(d), encoding="utf-8")
+    except OSError as e:
+        registro.error("whatsapp", f"no pude guardar el estado ({type(e).__name__})", "sigo en memoria")
+
+
 def _leer_estado() -> dict:
     """Estado {"ultimo_recibido": float, "citas_avisadas": {clave: momento}}; se lee del disco una vez."""
-    global _cache_estado
     with _cerrojo:
-        if _cache_estado is None:
-            try:
-                datos = json.loads(ESTADO.read_text(encoding="utf-8"))
-                if not isinstance(datos, dict):
-                    datos = {}
-            except (OSError, ValueError):
-                datos = {}
-            datos.setdefault("ultimo_recibido", 0.0)
-            datos.setdefault("citas_avisadas", {})
-            _cache_estado = datos
-        return json.loads(json.dumps(_cache_estado))      # copia: quien llama no toca la cache
+        return _leer_sin_cerrojo()
 
 
 def _guardar_estado(d: dict):
-    global _cache_estado
     with _cerrojo:
-        _cache_estado = d
-        try:
-            ESTADO.write_text(json.dumps(d), encoding="utf-8")
-        except OSError as e:
-            registro.error("whatsapp", f"no pude guardar el estado ({type(e).__name__})", "sigo en memoria")
+        _guardar_sin_cerrojo(d)
+
+
+def _actualizar_estado(fn):
+    """Lee-modifica-guarda el estado bajo el cerrojo. fn(d) modifica d (o devuelve otro dict) y puede devolver un valor."""
+    with _cerrojo:
+        d = _leer_sin_cerrojo()
+        r = fn(d)
+        _guardar_sin_cerrojo(d if not isinstance(r, dict) else r)
+        return r
 
 
 def marcar_recibido(momento: float = None):
     """Anota que acabas de escribirle a Jarvis (abre la ventana de 24 h)."""
-    d = _leer_estado()
-    d["ultimo_recibido"] = time.time() if momento is None else float(momento)
-    _guardar_estado(d)
+    t = time.time() if momento is None else float(momento)
+    _actualizar_estado(lambda d: d.__setitem__("ultimo_recibido", t))
 
 
 def en_ventana(ahora: float = None) -> bool:
@@ -589,3 +607,43 @@ def revisar_recordatorios(ahora: datetime = None) -> int:
         with _cerrojo:
             _guardar_recordatorios(_leer_recordatorios() + conservar)
     return enviados
+
+
+# ---------------------------------------------------------------- avisos de citas
+
+AVISO_MIN_DEFECTO = 15
+RETENCION_CITAS = 24 * 3600     # segundos que se recuerda una cita ya avisada
+
+
+def aviso_min() -> int:
+    """Minutos de antelacion con que se avisa de una cita (WHATSAPP_AVISO_MIN, por defecto 15)."""
+    try:
+        n = int(os.getenv("WHATSAPP_AVISO_MIN", "").strip() or AVISO_MIN_DEFECTO)
+    except ValueError:
+        return AVISO_MIN_DEFECTO
+    return n if n > 0 else AVISO_MIN_DEFECTO
+
+
+def revisar_citas(eventos: list, ahora: float = None) -> int:
+    """Avisa de las citas proximas que aun no se han avisado y devuelve cuantas se han enviado."""
+    ahora = time.time() if ahora is None else float(ahora)
+    ahora_dt = datetime.fromtimestamp(ahora)
+    pendientes = []
+
+    def decidir(d):
+        avisadas = d["citas_avisadas"]
+        for k in [k for k, t in avisadas.items() if not isinstance(t, (int, float)) or ahora - t > RETENCION_CITAS]:
+            del avisadas[k]
+        for ev in eventos:
+            clave = f"{ev['id']}|{ev['inicio'].isoformat()}"
+            if clave not in avisadas:
+                pendientes.append((clave, ev))
+    _actualizar_estado(decidir)
+    hechos = []
+    for clave, ev in pendientes:                     # sin el cerrojo: enviar() usa la red
+        minutos = max(1, round((ev["inicio"] - ahora_dt).total_seconds() / 60))
+        if enviar(f"En {minutos} min: {ev['titulo']} ({ev['inicio']:%H:%M})"):
+            hechos.append(clave)
+    if hechos:
+        _actualizar_estado(lambda d: d["citas_avisadas"].update({k: ahora for k in hechos}))
+    return len(hechos)
