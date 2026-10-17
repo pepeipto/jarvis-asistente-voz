@@ -1,6 +1,6 @@
 """
 Diagnostico de Jarvis: mide todo y lo guarda en diagnostico.txt (nunca escribe claves).
-Se lanza con diagnostico.bat. No reproduce sonido.
+Se lanza con diagnostico.bat (Windows) o diagnostico.command (Mac). No reproduce sonido.
 """
 import io
 import json
@@ -83,6 +83,15 @@ def sistema():
 # ---------------------------------------------------------------- 2. GPU
 def gpu():
     seccion("2. TARJETA GRAFICA")
+    if sys.platform == "darwin":
+        # Mac: no hay nvidia-smi; la GPU comparte la memoria con el sistema (memoria unificada)
+        try:
+            chip = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, timeout=10).stdout.strip()
+            mem = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=10).stdout.strip())
+            out(f"{chip} | memoria unificada: {mem / 1024 ** 3:.0f} GB")
+        except Exception as e:
+            out(f"no se pudo leer el chip: {e}")
+        return
     try:
         r = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu,driver_version",
                             "--format=csv,noheader"], capture_output=True, text=True, timeout=20)

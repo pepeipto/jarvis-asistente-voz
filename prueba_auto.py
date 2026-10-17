@@ -7,8 +7,8 @@ Para cada pregunta:
   3. La IA responde (con herramientas) en streaming.
   4. Se genera la voz de la respuesta y se "reproduce" en silencio, animando la ventana 3D.
 Mide cada paso y comprueba que lo que se pide apuntar se guarda de verdad.
-Usa un cerebro de pruebas aparte (prueba_cerebro\\), asi que no toca tus notas.
-Resultado en prueba_auto.txt.   Uso: prueba_auto.bat   (con --sin-ventana no abre la ventana 3D)
+Usa un cerebro de pruebas aparte (prueba_cerebro/), asi que no toca tus notas.
+Resultado en prueba_auto.txt.   Uso: prueba_auto.bat / prueba_auto.command   (con --sin-ventana no abre la ventana 3D)
 """
 import os
 import sys

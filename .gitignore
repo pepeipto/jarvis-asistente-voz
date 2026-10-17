@@ -16,3 +16,6 @@ __pycache__/
 diagnostico.txt
 modelos.txt
 prueba_auto.txt
+
+# macOS
+.DS_Store

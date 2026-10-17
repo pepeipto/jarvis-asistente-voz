@@ -22,6 +22,7 @@ import google_conector
 import llm
 import memoria
 import registro
+from plataforma import ES_MAC, script
 
 for _flujo in (sys.stdout, sys.stderr):      # evita errores con acentos en la consola de Windows
     try:
@@ -160,16 +161,33 @@ def aviso(texto):
 
 
 # ---------------------------------------------------------------- herramientas
-APPS = {
-    "calculadora": "calc",
-    "bloc de notas": "notepad",
-    "explorador": "explorer",
-    "navegador": "start chrome",
-    "chrome": "start chrome",
-    "spotify": "start spotify:",
-    "paint": "mspaint",
-    "administrador de tareas": "taskmgr",
-}
+if ES_MAC:
+    # en macOS se abre con "open -a <aplicacion>"
+    APPS = {
+        "calculadora": ["open", "-a", "Calculator"],
+        "bloc de notas": ["open", "-a", "TextEdit"],
+        "notas": ["open", "-a", "Notes"],
+        "explorador": ["open", "-a", "Finder"],
+        "finder": ["open", "-a", "Finder"],
+        "navegador": ["open", "-a", "Google Chrome"],
+        "chrome": ["open", "-a", "Google Chrome"],
+        "safari": ["open", "-a", "Safari"],
+        "spotify": ["open", "-a", "Spotify"],
+        "monitor de actividad": ["open", "-a", "Activity Monitor"],
+        "terminal": ["open", "-a", "Terminal"],
+        "ajustes": ["open", "-a", "System Settings"],
+    }
+else:
+    APPS = {
+        "calculadora": "calc",
+        "bloc de notas": "notepad",
+        "explorador": "explorer",
+        "navegador": "start chrome",
+        "chrome": "start chrome",
+        "spotify": "start spotify:",
+        "paint": "mspaint",
+        "administrador de tareas": "taskmgr",
+    }
 
 TOOLS = [
     {
@@ -230,7 +248,7 @@ def _run_tool(name, args):
         cmd = APPS.get(nombre)
         if not cmd:
             return f"No conozco la aplicacion '{nombre}'. Disponibles: {', '.join(APPS)}"
-        subprocess.Popen(cmd, shell=True)
+        subprocess.Popen(cmd, shell=not isinstance(cmd, list))
         return f"Abierta {nombre}."
     if name == "abrir_web":
         d = args["destino"].strip()
@@ -259,7 +277,7 @@ def cargar_audio():
             from faster_whisper import WhisperModel as _W
             WhisperModel = _W
     except ImportError as e:
-        raise RuntimeError(f"falta la libreria de audio '{e.name}' (ejecuta instalar.bat de nuevo)")
+        raise RuntimeError(f"falta la libreria de audio '{e.name}' (ejecuta {script('instalar')} de nuevo)")
 
 
 # ---------------------------------------------------------------- oido
@@ -896,8 +914,8 @@ def vigilante_google(primera_espera=60, cada=1800):
                 if caducado and not perdido:
                     perdido = True
                     registro.error("google", f"permiso perdido: {texto or type(e).__name__}",
-                                   "aviso al usuario para que ejecute conectar_google.bat")
-                    aviso("He perdido el acceso a Google. Ejecuta conectar_google.bat para renovarlo.")
+                                   f"aviso al usuario para que ejecute {script('conectar_google')}")
+                    aviso(f"He perdido el acceso a Google. Ejecuta {script('conectar_google')} para renovarlo.")
                     with lock_cerebro:
                         speak("Aviso: he perdido el acceso a su cuenta de Google. "
                               "Ejecute conectar Google para renovarlo.")

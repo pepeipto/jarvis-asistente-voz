@@ -1,4 +1,4 @@
-# JARVIS — Asistente de voz con segundo cerebro para Windows
+# JARVIS — Asistente de voz con segundo cerebro (Windows y macOS)
 
 Asistente de voz en español que funciona en tu PC: le hablas ("Jarvis, ..."), te entiende mientras
 hablas, piensa con una IA (local con Ollama o en la nube con Claude) y te responde con voz, frase a frase.
@@ -27,7 +27,7 @@ Velocidad medida (RTX 4090, Ollama `qwen3.8:27b`): **1,5 s de media** desde que 
 empieza a hablar.
 
 ## Requisitos
-- Windows 10/11, Python 3.11+ y Chrome o Edge (para la ventana 3D).
+- Windows 10/11 o macOS (Apple Silicon recomendado), Python 3.10-3.13 y Chrome, Edge o Brave (para la ventana 3D).
 - Cuenta de [ElevenLabs](https://elevenlabs.io) (voz y transcripción).
 - Al menos un cerebro de IA:
   - [Ollama](https://ollama.com) con un modelo que use herramientas (el instalador elige uno según tu
@@ -45,6 +45,22 @@ empieza a hablar.
 `diagnostico.bat` revisa gráfica, Ollama, ElevenLabs, micrófono y Google y deja el informe en
 `diagnostico.txt`.
 
+### Instalación en macOS
+1. `git clone https://github.com/pepeipto/jarvis-asistente-voz && cd jarvis-asistente-voz`
+   (si usas la rama de pruebas: `git checkout soporte-mac`).
+2. Necesitas Python (`brew install python@3.12`) y un navegador Chrome, Edge o Brave.
+3. Ejecuta `./instalar.command` (o doble clic). Crea `venv`, instala paquetes y propone un modelo de
+   Ollama según la memoria del Mac (32 GB o más: `qwen3.8:27b`; menos: `granite4.1:8b`).
+4. Copia `.env.example` como `.env` y rellena las claves. Arranca con `./jarvis.command`.
+5. La primera vez macOS pide permiso de **micrófono** para Terminal: pulsa Permitir (Ajustes del Sistema >
+   Privacidad y seguridad > Micrófono).
+Los demás scripts tienen la misma versión `.command` que el `.bat` de Windows (`diagnostico`, `actualizar`,
+`conectar_google`, `modelos`, `prueba_auto`, `jarvis_texto`, `crear_acceso_directo`).
+
+**Usar el Ollama de otro equipo** (por ejemplo el PC con la RTX 4090 desde el Mac): en el PC define
+`OLLAMA_HOST=0.0.0.0` y reinicia Ollama (abre el puerto 11434 solo en tu red local), y en el Mac pon en `.env`
+`OLLAMA_URL=http://IP-DEL-PC:11434`. Ollama no tiene clave: no lo expongas a internet.
+
 ## Configuración (`.env` / `ajustes.env`)
 | Variable | Para qué |
 |---|---|
@@ -56,6 +72,7 @@ empieza a hablar.
 | `STT_MODE`, `STT_VIVO` | Transcripción: `elevenlabs` o `local`; en vivo sí/no |
 | `WAKE_WORD`, `MICROFONO`, `INTERFAZ` | Palabra de activación, micrófono fijo, `web` o `clasica` |
 | `CEREBRO_DIR` | Carpeta del segundo cerebro (por defecto `cerebro/`) |
+| `OLLAMA_URL` | Dirección de Ollama (por defecto `http://127.0.0.1:11434`; puede ser otro equipo de tu red) |
 
 ## Estructura
 | Archivo | Responsabilidad |
@@ -66,6 +83,7 @@ empieza a hablar.
 | `google_conector.py`, `conectar_google.py` | Calendar, Gmail y Drive (OAuth) |
 | `interfaz_web.py`, `ui/` | Ventana 3D local (Three.js) |
 | `interfaz.py` | Ventana clásica sencilla |
+| `plataforma.py` | Diferencias Windows/macOS (nombre de los scripts, etc.) |
 | `registro.py` | Registro de errores con rotación |
 | `diagnostico.py`, `prueba_auto.py`, `modelos.py` | Diagnóstico, prueba de extremo a extremo silenciosa y comparativa de modelos |
 | `docs/superpowers/` | Diseños y planes de las próximas versiones |
