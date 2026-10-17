@@ -423,5 +423,122 @@ class ContenidoNoFiable(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class WhatsAppEnvio(unittest.TestCase):
+    """whatsapp.py: envio por la API de Meta (sin red y sin tocar el estado real)."""
+    VARS = ("WHATSAPP_TOKEN", "WHATSAPP_PHONE_ID", "WHATSAPP_MI_NUMERO", "WHATSAPP_PLANTILLA",
+            "WHATSAPP_API_VERSION")
+
+    def setUp(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        import registro
+        import whatsapp
+        self.os, self.whatsapp, self.registro = os, whatsapp, registro
+        self.antes_env = {v: os.environ.get(v) for v in self.VARS}
+        self.antes_mod = (whatsapp.ESTADO, whatsapp._cache_estado, whatsapp._post, registro.ARCHIVO)
+        self.tmp = tempfile.mkdtemp(prefix="jarvis_wa_")
+        os.environ.update({"WHATSAPP_TOKEN": "TOKEN", "WHATSAPP_PHONE_ID": "PHONEID",
+                           "WHATSAPP_MI_NUMERO": "+34 600 111 222"})
+        os.environ.pop("WHATSAPP_PLANTILLA", None)
+        os.environ.pop("WHATSAPP_API_VERSION", None)
+        whatsapp.ESTADO = Path(self.tmp) / "whatsapp_estado.json"
+        whatsapp._cache_estado = None
+        whatsapp._enviados.clear()
+        registro.ARCHIVO = Path(self.tmp) / "errores.txt"
+        self.llamadas = []
+
+        def falso(url, json, headers):
+            self.llamadas.append({"url": url, "json": json, "headers": headers})
+            return {"messages": [{"id": f"wamid.{len(self.llamadas)}"}]}
+        whatsapp._post = falso
+
+    def tearDown(self):
+        import shutil
+        w, r = self.whatsapp, self.registro
+        w.ESTADO, w._cache_estado, w._post, r.ARCHIVO = self.antes_mod
+        w._enviados.clear()
+        for v, valor in self.antes_env.items():
+            if valor is None:
+                self.os.environ.pop(v, None)
+            else:
+                self.os.environ[v] = valor
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_dentro_de_ventana_texto_libre(self):
+        import time
+        self.whatsapp.marcar_recibido(time.time() - 3600)
+        self.assertTrue(self.whatsapp.enviar("hola"))
+        self.assertEqual(len(self.llamadas), 1)
+        c = self.llamadas[0]
+        self.assertEqual(c["json"]["type"], "text")
+        self.assertEqual(c["json"]["to"], "34600111222")
+        self.assertTrue(c["url"].endswith("/PHONEID/messages"))
+        self.assertEqual(c["headers"]["Authorization"], "Bearer TOKEN")
+
+    def test_fuera_de_ventana_plantilla(self):
+        import time
+        self.whatsapp.marcar_recibido(time.time() - 25 * 3600)
+        self.assertTrue(self.whatsapp.enviar("hola"))
+        j = self.llamadas[0]["json"]
+        self.assertEqual(j["type"], "template")
+        self.assertEqual(j["template"]["name"], "aviso_jarvis")
+        self.assertEqual(j["template"]["language"]["code"], "es")
+        self.assertEqual(j["template"]["components"][0]["parameters"][0]["text"], "hola")
+
+    def test_sin_mensaje_previo_plantilla(self):
+        self.assertTrue(self.whatsapp.enviar("hola"))
+        self.assertEqual(self.llamadas[0]["json"]["type"], "template")
+
+    def test_ventana_sobrevive_reinicio(self):
+        self.whatsapp.marcar_recibido()
+        self.whatsapp._cache_estado = None
+        self.assertTrue(self.whatsapp.en_ventana())
+
+    def test_texto_largo_partido(self):
+        import time
+        self.whatsapp.marcar_recibido(time.time())
+        self.assertTrue(self.whatsapp.enviar("a" * 9000))
+        self.assertEqual(len(self.llamadas), 3)
+        for c in self.llamadas:
+            self.assertLessEqual(len(c["json"]["text"]["body"]), 4096)
+
+    def test_negrita(self):
+        self.assertEqual(self.whatsapp.para_whatsapp("**hola**"), ["*hola*"])
+
+    def test_plantilla_limpia(self):
+        t = self.whatsapp.texto_plantilla("a\nb\tc     d")
+        self.assertNotIn("\n", t)
+        self.assertNotIn("\t", t)
+        self.assertNotIn(" " * 5, t)
+
+    def test_numero_normalizado(self):
+        self.os.environ["WHATSAPP_MI_NUMERO"] = "+34 600-11 12 22"
+        self.assertEqual(self.whatsapp.mi_numero(), "34600111222")
+
+    def test_reenvio_plantilla(self):
+        import time
+        self.whatsapp.marcar_recibido(time.time())
+        self.assertTrue(self.whatsapp.enviar("hola"))
+        self.assertTrue(self.whatsapp.reenviar_con_plantilla("wamid.1"))
+        j = self.llamadas[-1]["json"]
+        self.assertEqual(j["type"], "template")
+        self.assertEqual(j["template"]["components"][0]["parameters"][0]["text"], "hola")
+        self.assertFalse(self.whatsapp.reenviar_con_plantilla("wamid.desconocido"))
+
+    def test_error_meta_no_lanza(self):
+        def roto(url, json, headers):
+            raise RuntimeError("fallo de Meta")
+        self.whatsapp._post = roto
+        self.assertFalse(self.whatsapp.enviar("hola"))
+        self.assertIn("[whatsapp]", self.registro.ARCHIVO.read_text(encoding="utf-8"))
+
+    def test_sin_configurar(self):
+        self.os.environ.pop("WHATSAPP_TOKEN")
+        self.assertFalse(self.whatsapp.configurado())
+        self.assertFalse(self.whatsapp.enviar("x"))
+        self.assertEqual(self.llamadas, [])
+
+
 if __name__ == "__main__":
     unittest.main()

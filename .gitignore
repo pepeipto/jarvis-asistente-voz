@@ -19,3 +19,7 @@ prueba_auto.txt
 
 # Grabaciones de clase (privadas)
 clases/
+
+# WhatsApp (v1.6)
+whatsapp_estado.json
+whatsapp_pendientes.json
