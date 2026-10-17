@@ -994,5 +994,92 @@ class WhatsAppCitas(_BaseWhatsApp):
             self.assertEqual(w.aviso_min(), 15)
 
 
+class WhatsAppCanal(unittest.TestCase):
+    def setUp(self):
+        import time
+        import tareas
+        import whatsapp_canal
+        self.wc, self.t, self.time = whatsapp_canal, tareas, time
+        self.llamadas = []
+
+        def original(nombre, args):
+            self.llamadas.append((nombre, args))
+            return f"hecho {nombre}"
+        self.canal = whatsapp_canal.Canal(original)
+        self._pend, self._lanzar, self._ejec = tareas._pendiente, tareas._lanzar, tareas.ejecutable
+        tareas._pendiente = None
+
+    def tearDown(self):
+        self.t._pendiente, self.t._lanzar, self.t.ejecutable = self._pend, self._lanzar, self._ejec
+
+    def test_filtrar(self):
+        nombres = ["abrir_programa", "abrir_carpeta", "abrir_web", "whatsapp_enviar", "guardar_nota", "correo_enviar"]
+        res = self.wc.filtrar([{"name": n} for n in nombres])
+        self.assertEqual([t["name"] for t in res], ["guardar_nota", "correo_enviar"])
+
+    def test_no_permitida_rechazada(self):
+        r = self.canal.run_tool("abrir_programa", {"nombre": "x"})
+        self.assertEqual(r, "Esa herramienta no está disponible por WhatsApp.")
+        self.assertEqual(self.llamadas, [])
+
+    def test_correo_se_intercepta(self):
+        args = {"para": "a@b.com", "asunto": "hola", "texto": "hey"}
+        r = self.canal.run_tool("correo_enviar", args)
+        self.assertEqual(self.llamadas, [])
+        self.assertTrue(r.startswith("Pendiente de confirmación"))
+        self.assertIn("correo_enviar", r)
+        self.assertIn("a@b.com", r)
+
+    def test_permitida_pasa(self):
+        self.assertEqual(self.canal.run_tool("hora_actual", {}), "hecho hora_actual")
+
+    def test_si_ejecuta(self):
+        args = {"para": "a@b.com"}
+        self.canal.run_tool("correo_enviar", args)
+        self.assertEqual(self.canal.antes_de_la_ia("Sí, mándalo"), "hecho correo_enviar")
+        self.assertEqual(self.llamadas, [("correo_enviar", args)])
+        self.assertIsNone(self.canal.pendiente())
+        self.canal.run_tool("calendario_crear", {"titulo": "x"})
+        self.assertEqual(self.canal.antes_de_la_ia("Jarvis, sí."), "hecho calendario_crear")
+
+    def test_no_cancela(self):
+        self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
+        self.assertEqual(self.canal.antes_de_la_ia("no"), "Vale, no lo hago.")
+        self.assertEqual(self.llamadas, [])
+        self.assertIsNone(self.canal.pendiente())
+
+    def test_otra_cosa_cancela_y_sigue(self):
+        self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
+        self.assertIsNone(self.canal.antes_de_la_ia("¿qué tengo mañana?"))
+        self.assertIsNone(self.canal.pendiente())
+        self.assertEqual(self.llamadas, [])
+
+    def test_sin_pendiente_un_si_no_hace_nada(self):
+        self.assertIsNone(self.canal.antes_de_la_ia("sí"))
+        self.assertEqual(self.llamadas, [])
+
+    def test_caduca(self):
+        self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
+        self.canal._pendiente["momento"] = self.time.time() - 6 * 60
+        self.assertIsNone(self.canal.antes_de_la_ia("sí"))
+        self.assertEqual(self.llamadas, [])
+        self.assertIsNone(self.canal.pendiente())
+
+    def test_uno_a_la_vez(self):
+        self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
+        self.canal.run_tool("drive_crear_documento", {"titulo": "d"})
+        self.assertEqual(self.canal.antes_de_la_ia("sí"), "hecho drive_crear_documento")
+        self.assertEqual(len(self.llamadas), 1)
+
+    def test_encargar_tarea_usa_tareas(self):
+        self.t._lanzar = lambda d, c: None
+        self.t.ejecutable = lambda: "claude.exe"
+        r = self.canal.run_tool("encargar_tarea", {"descripcion": "x"})
+        self.assertEqual(self.llamadas, [("encargar_tarea", {"descripcion": "x"})])
+        self.assertIsNone(self.canal.pendiente())
+        self.t._pendiente = {"descripcion": "x", "carpeta": "c", "momento": self.time.time()}
+        self.assertEqual(self.canal.antes_de_la_ia("sí"), "Me pongo con ello. Te aviso cuando termine.")
+
+
 if __name__ == "__main__":
     unittest.main()
