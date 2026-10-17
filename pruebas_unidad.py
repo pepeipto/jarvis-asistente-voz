@@ -258,8 +258,87 @@ class CerebroNube(unittest.TestCase):
         ia = _ia(c)
         ia.tools = [{"name": "buscar_web", "description": "", "input_schema": {}}]
         self.assertEqual(ia.responder([{"role": "user", "content": "hola"}]), "Vale.")
-        self.assertFalse(ia.busqueda_nube)
+        self.assertIn("cc/claude-haiku-5-5", ia._sin_buscador)
         self.assertEqual([t.get("name") for t in c.llamadas[1]["tools"]], ["buscar_web"])
+
+    def test_no_dice_que_guardo_si_la_herramienta_fallo(self):
+        # visto en la prueba real: la herramienta fallo y la IA dijo "Anotado queda en el diario"
+        c = ClienteFalso({"cc/claude-haiku-5-5": [
+            ([], [_uso("anadir_al_diario", {"texto": "fontanero"})], "tool_use"),
+            (["Anotado queda en el diario, señor."], [_texto("Anotado queda en el diario, señor.")], "end_turn")]})
+        ia = _ia(c, run_tool=lambda n, a: "Error en anadir_al_diario: disco lleno")
+        dicho = []
+        r = ia.responder([{"role": "user", "content": "apunta lo del fontanero"}], on_texto=dicho.append)
+        self.assertNotIn("Anotado", r)
+        self.assertIn("no he podido", r.lower())
+        self.assertNotIn("Anotado", "".join(dicho))                # tampoco se llega a decir en voz alta
+
+    def test_tras_un_fallo_la_respuesta_sincera_se_dice_igual(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [
+            ([], [_uso("anadir_al_diario", {"texto": "x"})], "tool_use"),
+            (["No he podido apuntarlo: el disco está lleno."],
+             [_texto("No he podido apuntarlo: el disco está lleno.")], "end_turn")]})
+        ia = _ia(c, run_tool=lambda n, a: "Error en anadir_al_diario: disco lleno")
+        dicho = []
+        r = ia.responder([{"role": "user", "content": "apunta x"}], on_texto=dicho.append)
+        self.assertEqual(r, "No he podido apuntarlo: el disco está lleno.")
+        self.assertEqual("".join(dicho), r)
+
+    # ---- v1.9: cadena de modelos gratuitos de OmniRoute
+    def _ia_cadena(self, guion, cadena="antigravity/gemini-3-flash,ddgw/gpt-5.6-luna"):
+        ia = _ia(ClienteFalso(guion))
+        ia.modelos_gratis = llm.lista_modelos(cadena)
+        return ia
+
+    def test_cadena_gratis_en_orden(self):
+        ia = self._ia_cadena({})
+        self.assertEqual(ia._orden(), ["anthropic", "anthropic_gratis:antigravity/gemini-3-flash",
+                                       "anthropic_gratis:ddgw/gpt-5.6-luna", "ollama"])
+
+    def test_cadena_salta_al_siguiente_gratis(self):
+        ia = self._ia_cadena({"cc/claude-haiku-5-5": [RuntimeError("Error code: 429 - rate limit")],
+                              "antigravity/gemini-3-flash": [ConnectionError("refused")],
+                              "ddgw/gpt-5.6-luna": [(["Hola."], [_texto("Hola.")], "end_turn")]})
+        self.assertEqual(ia.responder([{"role": "user", "content": "hola"}]), "Hola.")
+        self.assertEqual(ia.activo, "anthropic_gratis")
+        self.assertEqual(ia.ultimo_modelo, "ddgw/gpt-5.6-luna")
+
+    def test_limite_de_uso_aparta_un_minuto_solo_ese_modelo(self):
+        import time
+        ia = self._ia_cadena({"cc/claude-haiku-5-5": [(["Hola."], [_texto("Hola.")], "end_turn")],
+                              "antigravity/gemini-3-flash": [RuntimeError("Error code: 429 - rate limited")],
+                              "ddgw/gpt-5.6-luna": [(["Vale."], [_texto("Vale.")], "end_turn")]})
+        ia._apartado["anthropic"] = time.time() + 60
+        ia.responder([{"role": "user", "content": "hola"}])
+        hasta = ia._apartado["anthropic_gratis:antigravity/gemini-3-flash"]
+        self.assertTrue(time.time() + 30 < hasta <= time.time() + 61)
+        self.assertNotIn("anthropic_gratis:ddgw/gpt-5.6-luna", ia._apartado)
+
+    def test_buscador_de_claude_solo_en_claude_de_verdad(self):
+        # antigravity/claude-* es Claude, pero por otro proveedor: el buscador de Anthropic no esta alli
+        c = ClienteFalso({"cc/claude-haiku-5-5": [RuntimeError("Error code: 429")],
+                          "antigravity/claude-sonnet-4-6": [(["Ok."], [_texto("Ok.")], "end_turn")]})
+        ia = _ia(c)
+        ia.modelos_gratis = ["antigravity/claude-sonnet-4-6"]
+        ia.responder([{"role": "user", "content": "hola"}])
+        self.assertIn("web_search_20250305", [t.get("type") for t in c.llamadas[0]["tools"]])
+        self.assertNotIn("web_search_20250305", [t.get("type") for t in c.llamadas[1]["tools"]])
+
+    def test_sin_buscador_en_un_modelo_no_lo_quita_a_los_demas(self):
+        c = ClienteFalso({"cc/claude-haiku-5-5": [RuntimeError("Error code: 400 - unknown tool web_search_20250305"),
+                                                  (["Uno."], [_texto("Uno.")], "end_turn")],
+                          "cc/claude-sonnet-5-5": [(["Dos."], [_texto("Dos.")], "end_turn")]})
+        ia = _ia(c)
+        ia.responder([{"role": "user", "content": "hola"}])
+        self.assertNotIn("web_search_20250305", [t.get("type") for t in c.llamadas[1]["tools"]])
+        ia.anthropic_model = "cc/claude-sonnet-5-5"
+        ia.responder([{"role": "user", "content": "otra"}])
+        self.assertIn("web_search_20250305", [t.get("type") for t in c.llamadas[2]["tools"]])
+
+    def test_lista_modelos(self):
+        self.assertEqual(llm.lista_modelos(" a/b , ,c/d "), ["a/b", "c/d"])
+        self.assertEqual(llm.lista_modelos(["x"]), ["x"])
+        self.assertEqual(llm.lista_modelos(""), [])
 
     def test_sin_saldo_no_se_reintenta_en_cada_pregunta(self):
         c = ClienteFalso({"cc/claude-haiku-5-5": [RuntimeError("Your credit balance is too low")],
@@ -772,6 +851,22 @@ class OmniRouteArranque(unittest.TestCase):
         self.o.responde = lambda: (_ for _ in ()).throw(AssertionError("no debia mirar OmniRoute"))
         self.assertFalse(self.o.configurado())
         self.assertIsNone(self.o.iniciar())
+
+    def test_no_lee_el_env_de_jarvis(self):
+        # OmniRoute carga el .env de la carpeta donde arranca: desde E:\jarvis se llevaba tus claves de Jarvis
+        from pathlib import Path
+        estados = iter([False, True])
+        self.o.responde = lambda: next(estados)
+        self.o.buscar = lambda: r"C:\npm\omniroute.cmd"
+        visto = {}
+
+        def popen(*a, **k):
+            visto.update(k)
+            return type("P", (), {"poll": lambda s: None, "pid": 7})()
+        self.o.subprocess.Popen = popen
+        self.o.iniciar(espera=5)
+        self.assertNotEqual(Path(visto["cwd"]).resolve(), Path(self.o.__file__).resolve().parent)
+        self.assertNotIn("WHATSAPP_TOKEN", visto["env"])
 
     def test_no_cierra_uno_que_no_abrio(self):
         self.o.parar()

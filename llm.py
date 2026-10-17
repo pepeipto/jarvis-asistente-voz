@@ -27,6 +27,9 @@ MAX_VUELTAS = 6          # maximo de rondas de herramientas por peticion
 INTENCION = re.compile(r"\b(apunt\w*|anot\w*|guard\w*|recu[eé]rd\w*|añad\w*|agend\w*|memoriz\w*|diario|notas?)\b", re.I)
 AFIRMA = re.compile(r"\b(he (guardado|apuntado|anotado|añadido|registrado|creado|buscado|encontrado)|"
                     r"(queda|qued[oó]|est[aá]) (guardad|apuntad|anotad|registrad)\w*)", re.I)
+# Tambien "anotado queda", "guardada", "listo, apuntado"...: para no dar por hecho algo que fallo
+AFIRMA_HECHO = re.compile(AFIRMA.pattern + r"|\b(anotad|apuntad|guardad|registrad|añadid|agendad|enviad)[oa]s?\b",
+                          re.I)
 AVISO_SIN_HERRAMIENTA = ("[Aviso del sistema] En esta respuesta no has llamado a ninguna herramienta, asi que no se ha "
                          "guardado ni buscado nada. Si el usuario pidio guardar, apuntar o consultar algo de su cerebro, "
                          "llama ahora a la herramienta adecuada. Si no hacia falta ninguna, responde de nuevo sin afirmar "
@@ -36,7 +39,8 @@ CTX = int(os.getenv("OLLAMA_CTX") or 0)
 # funciona a traves de OmniRoute (medido el 17/10/2026); la 20250305 si. BUSQUEDA_CLAUDE=0 lo desactiva.
 BUSQUEDA_CLAUDE = {"type": "web_search_20250305", "name": "web_search", "max_uses": 5,
                    "user_location": {"type": "approximate", "country": "ES", "timezone": "Europe/Madrid"}}
-APARTAR = 600               # s sin reintentar un proveedor sin saldo o con la clave mal (no se arregla solo)
+APARTAR_LIMITE = 60         # s de descanso para un modelo que dice "limite de uso" (429)
+APARTAR = 600              # s sin reintentar un proveedor sin saldo o con la clave mal (no se arregla solo)
 ESPERA_PRIMER_TOKEN = 4.0    # segundos sin respuesta de la nube antes de pasar al modelo gratuito
 INACTIVIDAD = 240            # tras 4 min sin usar la nube, la primera respuesta tarda ~3 s mas: aviso minimo    # 0 = automatico (8192, o 6144 en modelos de 30B o mas)
 
@@ -78,11 +82,12 @@ def confirmacion_directa(calls, resultados):
 class IAError(Exception):
     """Error de IA con un texto corto para decir en voz alta y otro con el detalle para la pantalla."""
 
-    def __init__(self, hablado, detalle, permanente=False):
+    def __init__(self, hablado, detalle, permanente=False, apartar=0):
         super().__init__(detalle)
         self.hablado = hablado
         self.detalle = detalle
         self.permanente = permanente        # sin saldo o clave mala: reintentar enseguida no sirve
+        self.apartar = APARTAR if permanente else apartar    # segundos sin volver a probar ese proveedor
 
 
 def _limpiar(texto):
@@ -110,6 +115,19 @@ def _fuentes(bloques):
         return ""
     return (f"{MARCA_BUSQUEDA} Para esta respuesta busqué en internet con web_search: {', '.join(consultas)}."
             + (f" Resultados: {'; '.join(paginas[:8])}." if paginas else ""))
+
+
+def lista_modelos(valor):
+    """'a/b, c/d' (o una lista) -> ['a/b', 'c/d']."""
+    if isinstance(valor, (list, tuple)):
+        return [v.strip() for v in valor if v and v.strip()]
+    return [v.strip() for v in (valor or "").split(",") if v.strip()]
+
+
+def _claude_de_anthropic(modelo):
+    """True si el modelo es Claude servido por Anthropic (directo, cc/ o claude/ de OmniRoute): solo ahi esta
+    el buscador de Claude. antigravity/claude-... es Claude por otro proveedor y no lo tiene."""
+    return "claude" in modelo and (modelo.count("/") == 0 or modelo.split("/")[0] in ("cc", "claude", "no-think"))
 
 
 def _a_dict(x):
@@ -169,7 +187,8 @@ class IA:
         # La API oficial (api.anthropic.com) no es un proxy: va con la clave y sin los nombres "cc/..." de OmniRoute
         self.es_proxy = bool(anthropic_base_url) and "api.anthropic.com" not in anthropic_base_url.lower()
         self.anthropic_model = anthropic_model if self.es_proxy else anthropic_model.split("/")[-1]
-        self.modelo_respaldo_nube = modelo_respaldo_nube   # gratuito de OmniRoute si el principal falla
+        self.modelos_gratis = lista_modelos(modelo_respaldo_nube)   # gratuitos de OmniRoute, en orden, si falla el principal
+        self._sin_buscador = set()             # modelos donde el buscador de Claude ha fallado
         self.proveedor = (proveedor or "auto").lower()
         self.ollama_model_pref = ollama_model
         self._cliente_anthropic = None
@@ -243,19 +262,19 @@ class IA:
             try:
                 if prov == "ollama":
                     texto = self._ollama(history, on_texto)
-                elif prov == "anthropic_gratis":
-                    texto = self._anthropic(history, on_texto, modelo=self.modelo_respaldo_nube)
+                elif prov.startswith("anthropic_gratis:"):
+                    texto = self._anthropic(history, on_texto, modelo=prov.split(":", 1)[1])
                 else:
                     texto = self._anthropic(history, on_texto)
                 if not (texto or "").strip():      # nunca quedarse callado: probar el siguiente
                     raise IAError("No me ha llegado respuesta.", f"{prov} devolvio una respuesta vacia")
-                self.activo = prov
+                self.activo = prov.split(":")[0]
                 return texto
             except IAError as e:
                 errores.append(e)
                 del history[n_antes:]              # deshacer lo que haya dejado a medias
-                if e.permanente:
-                    self._apartado[prov] = time.time() + APARTAR
+                if e.apartar:
+                    self._apartado[prov] = time.time() + e.apartar
                 if self.on_reparacion and prov != orden[-1]:
                     siguiente = orden[orden.index(prov) + 1]
                     self.on_reparacion("ia", f"{prov} fallo ({e.detalle[:120]}): pruebo con {siguiente}")
@@ -273,7 +292,7 @@ class IA:
             return ["ollama"]
         if self.proveedor == "auto" and self.es_proxy and not self._proxy_responde():
             return ["ollama"]           # OmniRoute apagado: no esperar ~25 s de reintentos en cada pregunta
-        nube = ["anthropic"] + (["anthropic_gratis"] if self.es_proxy and self.modelo_respaldo_nube else [])
+        nube = ["anthropic"] + ([f"anthropic_gratis:{m}" for m in self.modelos_gratis] if self.es_proxy else [])
         ahora = time.time()
         nube = [p for p in nube if self._apartado.get(p, 0) <= ahora] or (nube if self.proveedor == "anthropic" else [])
         return nube if self.proveedor == "anthropic" else nube + ["ollama"]
@@ -532,13 +551,14 @@ class IA:
         modelo = modelo or self.anthropic_model
         self.ultimo_modelo = modelo
         dicho = [False]
+        fallo = None                 # primer error de una herramienta en esta respuesta
 
         def decir(t):
             dicho[0] = True
             on_texto(t)
         for _ in range(MAX_VUELTAS):
             emitido, acumulado = "", ""
-            buscador = self.busqueda_nube and "claude" in modelo
+            buscador = self.busqueda_nube and _claude_de_anthropic(modelo) and modelo not in self._sin_buscador
             # con el buscador de Claude (todo internet), buscar_web (DuckDuckGo/Wikipedia) sobra
             tools = ([t for t in self.tools if t.get("name") != "buscar_web"] + [BUSQUEDA_CLAUDE]) if buscador \
                 else self.tools
@@ -557,7 +577,7 @@ class IA:
                             continue
                         trozo = ev.text
                         acumulado += trozo
-                        if on_texto:
+                        if on_texto and not fallo:    # tras un fallo, no hablar hasta comprobar lo que dice
                             limpio = _limpiar_parcial(acumulado)
                             if len(limpio) > len(emitido) and limpio.startswith(emitido):
                                 decir(limpio[len(emitido):])
@@ -567,7 +587,7 @@ class IA:
             except Exception as e:
                 txt = str(e)
                 if buscador and "web_search" in txt and not emitido:
-                    self.busqueda_nube = False             # este proveedor no tiene el buscador: seguir sin el
+                    self._sin_buscador.add(modelo)         # este modelo no tiene el buscador: seguir sin el
                     if self.on_reparacion:
                         self.on_reparacion("ia", f"el buscador de Claude no esta disponible ({txt[:80]}): uso buscar_web")
                     continue
@@ -578,7 +598,9 @@ class IA:
                 if "401" in txt or "authentication" in txt.lower():
                     clave = "ANTHROPIC_AUTH_TOKEN (OmniRoute)" if self.es_proxy else "ANTHROPIC_API_KEY"
                     raise IAError("La clave de Anthropic no es válida.", f"{clave} no es válida.", permanente=True)
-                raise IAError("No he podido conectar con Claude.", f"Error de Claude ({modelo}): {txt[:200]}")
+                limite = "429" in txt or "rate limit" in txt.lower()   # limite de uso: descansar ese modelo 1 min
+                raise IAError("No he podido conectar con Claude.", f"Error de Claude ({modelo}): {txt[:200]}",
+                              apartar=APARTAR_LIMITE if limite else 0)
             if self.on_externo and any(b.type == "server_tool_use" for b in resp.content):
                 self.on_externo()                  # ha leido internet: mismas cautelas que con buscar_web
             texto = _MARCA_RE.sub("", "".join(b.text for b in resp.content if b.type == "text")).strip()
@@ -590,6 +612,9 @@ class IA:
                 extra = {"busquedas": f, "nube": [_a_dict(b) for b in resp.content
                                                   if b.type in ("server_tool_use", "web_search_tool_result", "text")]}
             if resp.stop_reason != "tool_use" or not usos:
+                if fallo and AFIRMA_HECHO.search(texto):   # la herramienta fallo pero la IA dice que lo hizo
+                    motivo = re.sub(r"^Error en \w+:\s*", "", fallo).strip().rstrip(".")
+                    texto = f"Lo siento, no he podido hacerlo: {motivo[:160]}."
                 if on_texto and texto and not emitido:
                     decir(texto)
                 history.append({"role": "assistant", "content": texto, **extra})
@@ -604,6 +629,8 @@ class IA:
                 res = self.run_tool(c["name"], c["args"])
                 resultados.append(res)
                 history.append({"role": "tool", "id": c["id"], "name": c["name"], "content": res})
+                if not fallo and str(res).lower().startswith(("error", "no se pudo")):
+                    fallo = str(res)
             directa = confirmacion_directa(calls, resultados) if RESPUESTA_RAPIDA else None
             if directa:
                 if on_texto:
