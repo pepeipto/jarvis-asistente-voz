@@ -50,6 +50,7 @@ class Canal:
         """Decide la confirmacion. Devuelve el texto a responder, o None para que siga la IA."""
         r = tareas.respuesta_confirmacion(texto)
         if r is not None:
+            self._pendiente = None      # el mensaje ya se ha gastado en la tarea: nada queda armado
             return r
         p = self.pendiente()
         if not p:
