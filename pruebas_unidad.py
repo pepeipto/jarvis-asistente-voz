@@ -801,5 +801,101 @@ class WhatsAppReceptor(_BaseWhatsApp):
         self.assertFalse(self.whatsapp.iniciar_receptor())
 
 
+class WhatsAppRecordatorios(_BaseWhatsApp):
+    """whatsapp.py: herramientas de la IA y recordatorios."""
+
+    def setUp(self):
+        from pathlib import Path
+        super().setUp()
+        self.antes_rec = self.whatsapp.RECORDATORIOS
+        self.whatsapp.RECORDATORIOS = Path(self.tmp) / "whatsapp_recordatorios.json"
+
+    def tearDown(self):
+        self.whatsapp.RECORDATORIOS = self.antes_rec
+        super().tearDown()
+
+    def _guardados(self):
+        import json
+        try:
+            return json.loads(self.whatsapp.RECORDATORIOS.read_text(encoding="utf-8"))
+        except OSError:
+            return []
+
+    def _texto_enviado(self, i=-1):
+        j = self.llamadas[i]["json"]
+        return j["text"]["body"] if "text" in j else j["template"]["components"][0]["parameters"][0]["text"]
+
+    def test_enviar_herramienta(self):
+        r = self.whatsapp.ejecutar("whatsapp_enviar", {"texto": "x"})
+        self.assertEqual(r, "Enviado a tu WhatsApp.")
+        self.assertEqual(len(self.llamadas), 1)
+
+    def test_enviar_sin_configurar(self):
+        self.os.environ.pop("WHATSAPP_TOKEN")
+        r = self.whatsapp.ejecutar("whatsapp_enviar", {"texto": "x"})
+        self.assertEqual(r, "WhatsApp no está configurado (mira LEEME.md).")
+        self.assertEqual(self.llamadas, [])
+
+    def test_enviar_no_acepta_destinatario(self):
+        esquema = [h for h in self.whatsapp.HERRAMIENTAS if h["name"] == "whatsapp_enviar"][0]["input_schema"]
+        self.assertEqual(list(esquema["properties"]), ["texto"])
+        self.whatsapp.ejecutar("whatsapp_enviar", {"texto": "x", "to": "34999"})
+        self.assertEqual(self.llamadas[0]["json"]["to"], self.whatsapp.mi_numero())
+
+    def test_recordar_guarda_y_envia_a_su_hora(self):
+        from datetime import datetime, timedelta
+        ahora = datetime.now().replace(microsecond=0)
+        cuando = (ahora + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%S")
+        r = self.whatsapp.ejecutar("whatsapp_recordar", {"texto": "llamar", "cuando": cuando})
+        self.assertTrue(r.startswith("Te lo recordaré por WhatsApp el "), r)
+        self.assertTrue(r.endswith(f" a las {cuando[11:16]}."), r)
+        self.assertEqual(len(self._guardados()), 1)
+        self.assertEqual(self.whatsapp.revisar_recordatorios(ahora + timedelta(minutes=1)), 0)
+        self.assertEqual(len(self._guardados()), 1)
+        self.assertEqual(self.whatsapp.revisar_recordatorios(ahora + timedelta(minutes=3)), 1)
+        self.assertIn("llamar", self._texto_enviado())
+        self.assertEqual(self._guardados(), [])
+
+    def test_recordar_atrasado_tras_reinicio(self):
+        import json
+        from datetime import datetime, timedelta
+        ahora = datetime.now().replace(microsecond=0)
+        fmt = "%Y-%m-%dT%H:%M:%S"
+        self.whatsapp.RECORDATORIOS.write_text(json.dumps([
+            {"texto": "reciente", "cuando": (ahora - timedelta(hours=2)).strftime(fmt)},
+            {"texto": "viejo", "cuando": (ahora - timedelta(hours=13)).strftime(fmt)}]), encoding="utf-8")
+        self.assertEqual(self.whatsapp.revisar_recordatorios(ahora), 1)
+        self.assertEqual(len(self.llamadas), 1)
+        self.assertIn("reciente", self._texto_enviado())
+        self.assertIn("(con retraso)", self._texto_enviado())
+        self.assertEqual(self._guardados(), [])
+
+    def test_fallo_de_envio_conserva_el_recordatorio(self):
+        import json
+        from datetime import datetime, timedelta
+        ahora = datetime.now().replace(microsecond=0)
+        self.whatsapp.RECORDATORIOS.write_text(json.dumps([
+            {"texto": "a", "cuando": (ahora - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%S")}]), encoding="utf-8")
+        self.os.environ.pop("WHATSAPP_TOKEN")
+        self.assertEqual(self.whatsapp.revisar_recordatorios(ahora), 0)
+        self.assertEqual(len(self._guardados()), 1)
+
+    def test_cuando_mal_formado(self):
+        for malo in ("mañana", "18h", ""):
+            r = self.whatsapp.ejecutar("whatsapp_recordar", {"texto": "x", "cuando": malo})
+            self.assertEqual(r, "No entiendo la fecha; pásala como 2026-10-17T18:00.")
+        self.assertEqual(self._guardados(), [])
+
+    def test_cuando_pasado(self):
+        from datetime import datetime, timedelta
+        ayer = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+        r = self.whatsapp.ejecutar("whatsapp_recordar", {"texto": "x", "cuando": ayer})
+        self.assertEqual(r, "Esa hora ya ha pasado.")
+        self.assertEqual(self._guardados(), [])
+
+    def test_ajena_devuelve_none(self):
+        self.assertIsNone(self.whatsapp.ejecutar("guardar_nota", {}))
+
+
 if __name__ == "__main__":
     unittest.main()
