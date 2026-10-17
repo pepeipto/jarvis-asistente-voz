@@ -18,7 +18,8 @@ con Google Calendar, Gmail y Drive. Tiene una interfaz 3D (un orbe animado con T
 - **Google**: consultar y crear citas, buscar, leer, redactar y enviar correos, buscar y leer archivos
   de Drive y crear Google Docs.
 - **PC**: abrir cualquier programa y carpeta, buscar, listar y leer archivos (solo en tus carpetas),
-  buscar en internet y encargar tareas grandes a Claude Code con confirmación por voz.
+  buscar en internet y encargar tareas grandes a Claude Code con confirmación por voz, incluido
+  un **modo programador** que ejecuta y prueba el código y puede continuar la última tarea.
 - **WhatsApp**: Jarvis te avisa (fin de tareas, citas, recordatorios) y atiende tus mensajes desde el móvil
   por la API oficial de Meta; lo delicado (enviar correos, crear citas) pide un «sí». Solo con el PC encendido.
 - **Autorreparación**: si se cae la voz, el micrófono queda mudo, Ollama está cerrado o se pierde el
@@ -85,6 +86,10 @@ empieza a hablar.
 ## Privacidad
 Fuera del repositorio (ver `.gitignore`): `.env` (claves), `google/` (permisos de Google), `cerebro/`
 (tus notas), registros y entornos. El registro de errores no guarda lo que dices, ni correos ni notas.
+
+## Versión 1.7
+Oído fiable (ya no cambia de micrófono al azar ni se queda sordo) y modo programador: Claude Code
+escribe, ejecuta y prueba código y continúa la última tarea. Detalle en [CHANGELOG.md](CHANGELOG.md).
 
 ## Versión 1.5
 Claude Haiku como cerebro principal a través de OmniRoute (0,93 s de media hasta la primera palabra),
