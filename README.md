@@ -19,6 +19,8 @@ con Google Calendar, Gmail y Drive. Tiene una interfaz 3D (un orbe animado con T
   de Drive y crear Google Docs.
 - **PC**: abrir cualquier programa y carpeta, buscar, listar y leer archivos (solo en tus carpetas),
   buscar en internet y encargar tareas grandes a Claude Code con confirmación por voz.
+- **WhatsApp**: Jarvis te avisa (fin de tareas, citas, recordatorios) y atiende tus mensajes desde el móvil
+  por la API oficial de Meta; lo delicado (enviar correos, crear citas) pide un «sí». Solo con el PC encendido.
 - **Autorreparación**: si se cae la voz, el micrófono queda mudo, Ollama está cerrado o se pierde el
   permiso de Google, lo detecta, lo arregla si puede y lo anota en `errores_log.txt`.
 - **Seguridad**: el contenido de notas, correos y documentos se trata como datos, no como órdenes;
@@ -57,6 +59,9 @@ empieza a hablar.
 | `STT_MODE`, `STT_VIVO` | Transcripción: `elevenlabs` o `local`; en vivo sí/no |
 | `WAKE_WORD`, `MICROFONO`, `INTERFAZ` | Palabra de activación, micrófono fijo, `web` o `clasica` |
 | `CEREBRO_DIR` | Carpeta del segundo cerebro (por defecto `cerebro/`) |
+| `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_MI_NUMERO` | WhatsApp: token de Meta, ID del número de Jarvis y tu número (sin ellas, WhatsApp queda apagado) |
+| `WHATSAPP_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `NGROK_DOMINIO` | WhatsApp entrante: firma de Meta, token de verificación del webhook y dominio fijo de ngrok |
+| `WHATSAPP_WABA_ID`, `WHATSAPP_PLANTILLA`, `WHATSAPP_AVISO_MIN`, `WHATSAPP_PUERTO`, `WHATSAPP_API_VERSION` | Opcionales: comprobar la plantilla en el diagnóstico, nombre de la plantilla (`aviso_jarvis`), minutos de antelación de los avisos de citas (15), puerto local (8766), versión de la Graph API |
 
 ## Estructura
 | Archivo | Responsabilidad |
@@ -69,6 +74,8 @@ empieza a hablar.
 | `tareas.py` | Tareas grandes con Claude Code y confirmación por voz |
 | `pruebas_unidad.py` | Pruebas rápidas sin voz ni red |
 | `google_conector.py`, `conectar_google.py` | Calendar, Gmail y Drive (OAuth) |
+| `whatsapp.py` | WhatsApp: envío (texto o plantilla), webhook firmado, recordatorios, avisos de citas y ngrok |
+| `whatsapp_canal.py` | Conversación por WhatsApp: herramientas permitidas y confirmación («sí») de lo delicado |
 | `interfaz_web.py`, `ui/` | Ventana 3D local (Three.js) |
 | `interfaz.py` | Ventana clásica sencilla |
 | `registro.py` | Registro de errores con rotación |

@@ -10,6 +10,27 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.6.0] - 17/10/2026 - Jarvis en WhatsApp
+Diseño: `docs/superpowers/specs/2026-10-16-jarvis-whatsapp-design.md`.
+
+- **Avisos a tu móvil:** fin de tareas, citas próximas (15 min antes), recordatorios que le pidas por voz
+  (`whatsapp_recordar`), envío a petición (`whatsapp_enviar`) y problemas sin reparar (máximo uno cada 30 min).
+  Dentro de las 24 h de tu último mensaje va como texto libre; fuera, dentro de la plantilla `aviso_jarvis`.
+- **Conversación desde el móvil:** escribes a Jarvis por WhatsApp y contesta con texto. Lo delicado
+  (enviar correos, crear citas o documentos, encargar tareas) solo se hace si tu siguiente mensaje es un «sí»,
+  decidido por el código; caduca a los 5 minutos. Jarvis no abre programas ni webs desde ahí.
+- **Entrada segura:** receptor solo en `127.0.0.1`, publicado por ngrok con dominio fijo (Jarvis lo arranca
+  y lo cierra). Cada petición lleva la firma de Meta o se rechaza; solo se atiende tu número; sin repetidos
+  y con límite por minuto. El registro nunca guarda el texto de los mensajes.
+- **Diagnóstico y guía:** `diagnostico.bat` tiene la sección 9 (variables, token, plantilla, ngrok, dominio)
+  y `LEEME.md` explica el alta paso a paso.
+- **Límites conocidos:** solo funciona con el PC encendido y Jarvis abierto; los mensajes con Jarvis cerrado
+  no se recuperan. Con el número de prueba de Meta, la plantilla propia podría requerir verificación; sin ella,
+  los avisos fuera de las 24 h quedan limitados.
+
+**Comprobado:** pruebas automáticas sin red (`pruebas_unidad.py`) y `diagnostico.bat` sin WhatsApp configurado.
+**Sin comprobar todavía:** la prueba real con Meta (ida y vuelta, plantilla, confirmación, recordatorio).
+
 ## [1.5.0] - 16/10/2026 - Cerebro en la nube y manos en el PC
 Diseño: `docs/superpowers/specs/2026-10-16-jarvis-nube-y-manos-design.md` (revisado también por Gemini).
 

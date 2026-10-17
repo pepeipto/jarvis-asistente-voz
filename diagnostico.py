@@ -265,9 +265,86 @@ def claude_code():
     out("Version:", (r.stdout or r.stderr).strip())
 
 
+# ---------------------------------------------------------------- 9. whatsapp
+def _enmascarar(n):
+    n = "".join(c for c in n if c.isdigit())
+    return n if len(n) < 6 else n[:2] + "*" * (len(n) - 5) + n[-3:]
+
+
+def whatsapp_diag():
+    seccion("9. WHATSAPP")
+    import whatsapp
+    variables = ("WHATSAPP_TOKEN", "WHATSAPP_PHONE_ID", "WHATSAPP_MI_NUMERO", "WHATSAPP_APP_SECRET",
+                 "WHATSAPP_VERIFY_TOKEN", "NGROK_DOMINIO")
+    faltan = [n for n in variables if not env(n)]
+    for n in variables:
+        out(f"  {n}: {'puesta' if env(n) else 'FALTA'}")
+    if env("WHATSAPP_MI_NUMERO"):
+        out("  Tu numero (enmascarado):", _enmascarar(env("WHATSAPP_MI_NUMERO")))
+    if faltan:
+        out("Faltan variables en .env:", ", ".join(faltan), "(mira LEEME.md, seccion WhatsApp)")
+    token, phone = env("WHATSAPP_TOKEN"), env("WHATSAPP_PHONE_ID")
+    version = env("WHATSAPP_API_VERSION") or whatsapp.API_VERSION_DEFECTO
+    base = f"https://graph.facebook.com/{version}"
+    cab = {"Authorization": f"Bearer {token}"}
+
+    def error_meta(r):
+        try:
+            return r.json().get("error", {}).get("message", "") or r.text[:150]
+        except ValueError:
+            return r.text[:150]
+
+    if token and phone:
+        try:
+            r = requests.get(f"{base}/{phone}", headers=cab, timeout=10,
+                             params={"fields": "display_phone_number,verified_name"})
+            if r.status_code == 200:
+                d = r.json()
+                out(f"Token y numero de Jarvis: OK ({d.get('verified_name', '?')}, "
+                    f"{_enmascarar(str(d.get('display_phone_number', '')))})")
+            else:
+                out(f"Token y numero de Jarvis: ERROR HTTP {r.status_code}: {error_meta(r)}")
+        except Exception as e:
+            out("Token y numero de Jarvis: no se pudo comprobar:", type(e).__name__)
+    else:
+        out("Token y numero de Jarvis: sin comprobar (faltan WHATSAPP_TOKEN o WHATSAPP_PHONE_ID)")
+
+    plantilla = env("WHATSAPP_PLANTILLA") or whatsapp.PLANTILLA_DEFECTO
+    waba = env("WHATSAPP_WABA_ID")
+    if waba and token:
+        try:
+            r = requests.get(f"{base}/{waba}/message_templates", headers=cab, timeout=10,
+                             params={"name": plantilla, "fields": "name,status,language"})
+            if r.status_code == 200:
+                datos = r.json().get("data", [])
+                if datos:
+                    out(f"Plantilla {plantilla}: " + ", ".join(f"{t.get('language')} {t.get('status')}" for t in datos))
+                else:
+                    out(f"Plantilla {plantilla}: NO existe en esa cuenta")
+            else:
+                out(f"Plantilla {plantilla}: ERROR HTTP {r.status_code}: {error_meta(r)}")
+        except Exception as e:
+            out("Plantilla: no se pudo comprobar:", type(e).__name__)
+    else:
+        out(f"Plantilla {plantilla}: sin comprobar (opcional: pon WHATSAPP_WABA_ID en .env para comprobarla)")
+
+    exe = whatsapp.buscar_ngrok()
+    out("ngrok.exe:", exe or "NO encontrado (instalalo como explica LEEME.md)")
+    out("ngrok publicando tu dominio ahora:", "si" if whatsapp.ngrok_ya_publica() else "no (Jarvis lo arranca al abrirse)")
+    dominio = whatsapp._dominio_ngrok()
+    if dominio:
+        try:
+            r = requests.get(f"https://{dominio}/whatsapp", params={"hub.mode": "x"}, timeout=10)
+            out(f"Dominio {dominio}: responde (HTTP {r.status_code})")
+        except Exception as e:
+            out(f"Dominio {dominio}: sin respuesta ({type(e).__name__}); normal si Jarvis o ngrok no estan abiertos")
+    else:
+        out("Dominio: sin comprobar (falta NGROK_DOMINIO)")
+
+
 for nombre, fn in (("sistema", sistema), ("gpu", gpu), ("ollama", ollama), ("bench", bench),
                    ("elevenlabs", elevenlabs), ("audio", audio), ("cerebro", cerebro),
-                   ("claude_code", claude_code)):
+                   ("claude_code", claude_code), ("whatsapp", whatsapp_diag)):
     paso(nombre, fn)
 seccion("FIN")
 out(time.strftime("%H:%M:%S"))

@@ -79,6 +79,81 @@ Al empezar la noche era 3,2 s. Lo que lo consigue:
 - Si algo falla, mira `errores_log.txt`: cada fallo, qué lo causó y qué hizo Jarvis para arreglarlo.
 - Cada versión está guardada con git: `git tag` las lista y `git checkout v1.3.1` vuelve a una anterior.
 
+## WhatsApp, paso a paso
+Con esto Jarvis te avisa por WhatsApp (tareas terminadas, citas, recordatorios) y puedes escribirle desde
+el movil. Usa el numero de prueba gratuito de Meta como numero de Jarvis; tu numero personal es el unico
+destinatario y el unico que Jarvis atiende. Es opcional: sin configurar nada, Jarvis funciona como siempre.
+Requiere iniciar sesion y aceptar condiciones, asi que lo haces tu. Tarda un buen rato la primera vez.
+Los nombres de pantallas y botones de Meta y ngrok cambian a veces; si alguno no coincide, busca el equivalente.
+
+**Paso 1 - Crear la app en Meta.** Entra en developers.facebook.com con tu cuenta de Facebook y crea una app
+de tipo *Business*. Dentro de la app anade el producto *WhatsApp*. Elige o crea una cuenta de WhatsApp Business
+cuando te lo pida. En el menu izquierdo, *WhatsApp > API Setup* muestra el *Phone number ID*
+(apuntalo: es `WHATSAPP_PHONE_ID`) y el *WhatsApp Business Account ID* (`WHATSAPP_WABA_ID`, opcional).
+El *App Secret* (clave secreta de la app) esta en los ajustes basicos de la app, con un boton para mostrarlo:
+es `WHATSAPP_APP_SECRET`.
+
+**Paso 2 - Anadir tu numero como destinatario.** En *API Setup*, en el campo *To*, elige anadir un numero de
+telefono nuevo y escribe el tuyo. Meta te manda un codigo a tu movil: introducelo. Solo se hace una vez.
+Tu numero va en `.env` con prefijo de pais, sin `+` ni espacios (por ejemplo `34600111222`).
+
+**Paso 3 - Token permanente.** El token temporal de *API Setup* (*Generate access token*) caduca en unas
+horas: no sirve. En la Configuracion del negocio de Meta (Business Settings) entra en *System users*
+(usuarios del sistema), pulsa *Add* y crea uno con rol de administrador. Con ese usuario seleccionado usa
+*Assign Assets* para darle control sobre tu app y tu cuenta de WhatsApp. Despues pulsa *Generate token*,
+elige tu app, marca los permisos `whatsapp_business_messaging` y `whatsapp_business_management` y copia el
+token: es `WHATSAPP_TOKEN`. Solo se muestra una vez.
+
+**Paso 4 - Plantilla `aviso_jarvis`.** Fuera de las 24 h siguientes a tu ultimo mensaje, WhatsApp solo deja
+enviar plantillas aprobadas. En el WhatsApp Manager de tu cuenta, en la seccion de plantillas de mensaje,
+crea una nueva con estos datos exactos:
+- Nombre: `aviso_jarvis`
+- Categoria: *Utility* (Utilidad)
+- Idioma: *Spanish* (Espanol)
+- Cuerpo: `Jarvis: {{1}}` (con una variable; si pide un ejemplo, escribe cualquier frase)
+
+Envia la plantilla y espera a que la aprueben (suele ser rapido). Limitacion conocida: con el numero de
+prueba de Meta puede que no deje usar plantillas propias hasta que verifiques una empresa o registres un
+numero real. Si es asi, los avisos fuera de las 24 h no llegaran; dentro de las 24 h (si hablaste con Jarvis
+hace poco) funcionan igual.
+
+**Paso 5 - ngrok.** ngrok es la puerta por la que Meta llega a tu PC.
+1. Crea una cuenta gratuita en ngrok.com.
+2. Instala `ngrok.exe` (por ejemplo, en una ventana de comandos: `winget install ngrok.ngrok`, o descargalo de
+   ngrok.com). Jarvis lo encuentra en el PATH o en los sitios habituales.
+3. En el panel de ngrok (dashboard) busca tu *authtoken* y, en una ventana de comandos, ejecuta
+   `ngrok config add-authtoken TU_TOKEN` (con tu token en lugar de TU_TOKEN).
+4. En el panel de ngrok, en la seccion de dominios (*Domains*), reserva el dominio estatico gratuito. Te da
+   uno como `algo-algo.ngrok-free.app`: es `NGROK_DOMINIO` (sin `https://`).
+
+**Paso 6 - Rellenar `.env`, arrancar y registrar el webhook.**
+1. Abre `.env` (no lo compartas) y anade, sin comillas:
+   - `WHATSAPP_TOKEN`: el token permanente del paso 3.
+   - `WHATSAPP_PHONE_ID`: el Phone number ID del paso 1.
+   - `WHATSAPP_MI_NUMERO`: tu numero, con prefijo y sin `+` (paso 2).
+   - `WHATSAPP_APP_SECRET`: el App Secret del paso 1.
+   - `WHATSAPP_VERIFY_TOKEN`: una frase que inventes tu (por ejemplo `jarvis-clave-casa-2026`).
+   - `NGROK_DOMINIO`: tu dominio de ngrok del paso 5.
+   - Opcionales: `WHATSAPP_WABA_ID` (para que el diagnostico compruebe la plantilla), `WHATSAPP_PLANTILLA`
+     (por defecto `aviso_jarvis`), `WHATSAPP_AVISO_MIN` (minutos de antelacion de los avisos de citas, 15),
+     `WHATSAPP_PUERTO` (8766) y `WHATSAPP_API_VERSION`. Hay ejemplos en `.env.example`.
+2. Cierra y abre Jarvis con `jarvis.bat`. Al arrancar abre el receptor y ngrok por su cuenta, y los cierra
+   al salir.
+3. En developers.facebook.com, en tu app, entra en la configuracion de WhatsApp (*WhatsApp > Configuration*),
+   en la parte del webhook, y edita el webhook con:
+   - Callback URL: `https://TU_DOMINIO/whatsapp` (con tu dominio de ngrok).
+   - Verify token: el mismo texto de `WHATSAPP_VERIFY_TOKEN`.
+   Guarda/verifica. Jarvis debe estar abierto para contestar a Meta.
+4. En esa misma parte, en los campos del webhook (*Webhook fields*), suscribete al campo `messages`.
+
+**Importante:** WhatsApp solo funciona con el PC encendido y Jarvis abierto. Si te escriben mientras esta cerrado,
+Meta reintenta un rato, pero Jarvis no guarda esos mensajes ni los recupera despues.
+
+**Comprueba con `diagnostico.bat`.** Abre `diagnostico.txt` y mira la seccion *9. WHATSAPP*: te dice que
+variables faltan, si el token y el numero son validos, si la plantilla existe (si pusiste `WHATSAPP_WABA_ID`),
+si `ngrok.exe` esta instalado y si tu dominio responde (con Jarvis abierto). Despues escribe "hola" al
+numero de Jarvis desde tu movil.
+
 ## Grafica y juegos
 qwen3.8:27b ocupa ~17 GB de la grafica y se queda cargado 30 minutos tras el ultimo uso.
 Antes de un juego exigente cierra Jarvis, o en una ventana de comandos: `ollama stop qwen3.8:27b`.
