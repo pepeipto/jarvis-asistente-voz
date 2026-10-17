@@ -73,6 +73,32 @@ Al empezar la noche era 3,2 s. Lo que lo consigue:
 - Para encargar tareas: Claude Code (`npm install -g @anthropic-ai/claude-code`). `diagnostico.bat` lo comprueba.
 - Pruebas rapidas sin voz: `venv\Scripts\python.exe -m unittest pruebas_unidad -v`
 
+## Cerebro y proveedores gratuitos (v1.9)
+Orden en que Jarvis piensa (si uno falla o se agota, pasa al siguiente en segundos):
+1. **Claude Haiku** por OmniRoute (`cc/...`, tu suscripción de Claude: sin pagar por tokens). Es el único
+   con el buscador de internet de Claude.
+2. **Gratis**, por OmniRoute: Gemini 3 Flash y Claude Sonnet 4.6 (Antigravity, con tu cuenta de Google),
+   GPT-5.6 Luna (DuckDuckGo) y `auto/best-fast`. Se cambia con `MODELOS_GRATIS` en `ajustes.env`.
+3. **Local** en tu gráfica (Ollama), sin internet.
+
+Para tener más proveedores gratuitos, crea la cuenta en su web, copia la clave y añádela en el panel de
+OmniRoute (http://localhost:20128 > Providers > Add) o en una consola con `omniroute providers add <id>`.
+`auto/best-fast` (y tu «mi combo» si los añades) los usa solo. Recomendados (gratis y fiables):
+
+| Proveedor (id) | Dónde se saca la clave | Para qué |
+|---|---|---|
+| Google AI Studio (`gemini`) | aistudio.google.com > Get API key | Gemini con mucho uso gratis al día |
+| Groq (`groq`) | console.groq.com > API Keys | Llama, Qwen y GPT-OSS rapidísimos |
+| Cerebras (`cerebras`) | cloud.cerebras.ai > API Keys | El más rápido; buen respaldo |
+| OpenRouter (`openrouter`) | openrouter.ai > Keys | Decenas de modelos `:free` |
+| Mistral (`mistral`) | console.mistral.ai > plan Experiment | Mistral gratis, bueno en español |
+| NVIDIA NIM (`nvidia`) | build.nvidia.com > Get API Key | Muchos modelos abiertos |
+| Tavily (`tavily-search`) | app.tavily.com | Buscador para cuando no hay Claude (1000/mes) |
+
+Sin clave, solo iniciando sesión en el panel: Kiro (`kiro`), Qoder (`qoder`) y Amazon Q (`amazon-q`).
+Los proveedores rotos que estaban en «mi combo» (Codex) se quitaron el 17/10/2026; la copia del combo
+original está en `C:\Users\<tú>\.omniroute\copias\`.
+
 ## Ajustes
 - `.env`: tus claves (ElevenLabs, Anthropic, token de OmniRoute). No lo compartas.
 - `ajustes.env`: ajustes sin claves. Ahora: `OLLAMA_MODEL=qwen3.8:27b`, `TTS_MODEL=eleven_flash_v2_5`.
