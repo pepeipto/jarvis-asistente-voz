@@ -481,6 +481,10 @@ class WhatsAppEnvio(_BaseWhatsApp):
         self.assertEqual(c["json"]["to"], "34600111222")
         self.assertTrue(c["url"].endswith("/PHONEID/messages"))
         self.assertEqual(c["headers"]["Authorization"], "Bearer TOKEN")
+        log = self.registro.ARCHIVO.read_text(encoding="utf-8")
+        self.assertIn("[whatsapp] aviso enviado", log)
+        self.assertNotIn("hola", log)
+        self.assertNotIn("111222", log)
 
     def test_fuera_de_ventana_plantilla(self):
         import time
@@ -896,6 +900,30 @@ class WhatsAppRecordatorios(_BaseWhatsApp):
     def test_ajena_devuelve_none(self):
         self.assertIsNone(self.whatsapp.ejecutar("guardar_nota", {}))
 
+    def test_recordar_sin_configurar(self):
+        from datetime import datetime, timedelta
+        self.os.environ.pop("WHATSAPP_TOKEN")
+        cuando = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
+        r = self.whatsapp.ejecutar("whatsapp_recordar", {"texto": "x", "cuando": cuando})
+        self.assertEqual(r, "WhatsApp no está configurado (mira LEEME.md).")
+        self.assertEqual(self._guardados(), [])
+
+    def test_guardado_fallido_no_envia(self):
+        import json
+        from datetime import datetime, timedelta
+        ahora = datetime.now().replace(microsecond=0)
+        self.whatsapp.RECORDATORIOS.write_text(json.dumps([
+            {"texto": "a", "cuando": (ahora - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%S")}]), encoding="utf-8")
+        # el .tmp es una carpeta: el guardado que retira los vencidos falla
+        self.whatsapp.RECORDATORIOS.with_name(self.whatsapp.RECORDATORIOS.name + ".tmp").mkdir()
+        with self.whatsapp._cerrojo:
+            self.assertFalse(self.whatsapp._guardar_recordatorios([]))
+        self.assertEqual(self.whatsapp.revisar_recordatorios(ahora), 0)
+        self.assertEqual(self.whatsapp.revisar_recordatorios(ahora), 0)
+        self.assertEqual(self.llamadas, [])
+        self.assertEqual(len(self._guardados()), 1)
+        self.assertIn("no envio los recordatorios", self.registro.ARCHIVO.read_text(encoding="utf-8"))
+
 
 class WhatsAppCitas(_BaseWhatsApp):
     """whatsapp.py + google_conector.py: aviso de citas proximas."""
@@ -1042,6 +1070,33 @@ class WhatsAppCanal(unittest.TestCase):
         self.canal.run_tool("calendario_crear", {"titulo": "x"})
         self.assertEqual(self.canal.antes_de_la_ia("Jarvis, sí."), "hecho calendario_crear")
 
+    def test_si_con_condiciones_no_ejecuta(self):
+        for frase in ("vale, pero cambia el asunto", "claro que no", "ok pero a Juan no", "sí, pero luego"):
+            self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
+            self.assertIsNone(self.canal.antes_de_la_ia(frase), frase)
+            self.assertIsNone(self.canal.pendiente())
+        self.assertEqual(self.llamadas, [])
+
+    def test_si_con_condiciones_no_lanza_tarea(self):
+        self.lanzadas = []
+        self.t._lanzar = lambda d, c: self.lanzadas.append((d, c))
+        self.t.ejecutable = lambda: "claude.exe"
+        for frase in ("vale, pero cambia el asunto", "claro que no"):
+            self.t._pendiente = {"descripcion": "x", "carpeta": "c", "momento": self.time.time()}
+            self.assertIsNone(self.canal.antes_de_la_ia(frase), frase)
+            self.assertIsNone(self.t.pendiente())
+        self.assertEqual(self.lanzadas, [])
+        self.t._pendiente = {"descripcion": "x", "carpeta": "c", "momento": self.time.time()}
+        self.assertEqual(self.canal.antes_de_la_ia("Sí, por favor"), "Me pongo con ello. Te aviso cuando termine.")
+        self.assertEqual(len(self.lanzadas), 1)
+
+    def test_si_estricto(self):
+        for bien in ("si", "vale", "ok", "de acuerdo", "si, mandalo", "si envialo", "adelante por favor"):
+            self.assertTrue(self.t.es_si_estricto(bien), bien)
+        for mal in ("vale, pero cambia el asunto", "claro que no", "si no", "ok pero a juan no", "vale y manda otro",
+                    "si, adelante pero no"):
+            self.assertFalse(self.t.es_si_estricto(mal), mal)
+
     def test_no_cancela(self):
         self.canal.run_tool("correo_enviar", {"para": "a@b.com"})
         self.assertEqual(self.canal.antes_de_la_ia("no"), "Vale, no lo hago.")
@@ -1113,10 +1168,14 @@ class WhatsAppNgrok(unittest.TestCase):
         import whatsapp
         self.os, self.sp, self.w = os, subprocess, whatsapp
         self.antes_env = {v: os.environ.get(v) for v in self.VARS}
+        import registro
+        self.registro = registro
         self.antes_mod = (whatsapp._proc_ngrok, whatsapp._esperar, whatsapp.buscar_ngrok,
-                          whatsapp.ngrok_ya_publica, whatsapp._matar_ngrok, subprocess.Popen, whatsapp.LOG_NGROK)
+                          whatsapp.ngrok_ya_publica, whatsapp._matar_ngrok, subprocess.Popen, whatsapp.LOG_NGROK,
+                          registro.ARCHIVO)
         self.tmp = __import__("tempfile").mkdtemp(prefix="jarvis_ngrok_")
         whatsapp.LOG_NGROK = __import__("pathlib").Path(self.tmp) / "ngrok_log.txt"
+        registro.ARCHIVO = __import__("pathlib").Path(self.tmp) / "errores.txt"
         whatsapp._proc_ngrok = None
         whatsapp._esperar = lambda s: None
         self.real_publica = whatsapp.ngrok_ya_publica
@@ -1144,7 +1203,7 @@ class WhatsAppNgrok(unittest.TestCase):
         import shutil
         w = self.w
         (w._proc_ngrok, w._esperar, w.buscar_ngrok, w.ngrok_ya_publica, w._matar_ngrok,
-         self.sp.Popen, w.LOG_NGROK) = self.antes_mod
+         self.sp.Popen, w.LOG_NGROK, self.registro.ARCHIVO) = self.antes_mod
         for v, valor in self.antes_env.items():
             if valor is None:
                 self.os.environ.pop(v, None)
@@ -1171,6 +1230,7 @@ class WhatsAppNgrok(unittest.TestCase):
         self.assertIn("ngrok", r)
         self.assertIn("LEEME", r)
         self.assertEqual(self.lanzados, [])
+        self.assertIn("no encuentro ngrok.exe", self.registro.ARCHIVO.read_text(encoding="utf-8"))
 
     def test_ya_publicado_no_lanza(self):
         self.w.ngrok_ya_publica = lambda: True
@@ -1233,7 +1293,8 @@ class WhatsAppNgrok(unittest.TestCase):
 class WhatsAppJarvis(_BaseWhatsApp):
     """jarvis.py: herramientas, conversacion y avisos graves por WhatsApp."""
     _NADA = object()
-    GLOBALES = ("canal", "ia_wa", "history_wa", "_ultimo_grave", "ia")
+    GLOBALES = ("canal", "ia_wa", "history_wa", "_ultimo_grave", "ia", "aviso", "vigilante_whatsapp",
+                "crear_ia_whatsapp")
 
     def setUp(self):
         super().setUp()
@@ -1259,6 +1320,10 @@ class WhatsAppJarvis(_BaseWhatsApp):
         jarvis.ia_wa = llm.IA([], lambda: "", jarvis.canal.run_tool)
         jarvis.history_wa = []
         jarvis._ultimo_grave = 0.0
+        self.avisos = []
+        jarvis.aviso = self.avisos.append          # sin print: la salida de las pruebas queda limpia
+        self.antes_t = (tareas.CARPETA_DEFECTO, tareas._ultimo_externo, tareas.on_fin)
+        self.antes_w = (self.whatsapp.iniciar_receptor, self.whatsapp.iniciar_ngrok, self.whatsapp.al_recibir)
 
     def tearDown(self):
         for g, v in self.antes_j.items():
@@ -1268,6 +1333,9 @@ class WhatsAppJarvis(_BaseWhatsApp):
             else:
                 setattr(self.j, g, v)
         self.tareas._pendiente = self.antes_pend
+        self.tareas.CARPETA_DEFECTO, self.tareas._ultimo_externo, self.tareas.on_fin = self.antes_t
+        w = self.whatsapp
+        w.iniciar_receptor, w.iniciar_ngrok, w.al_recibir = self.antes_w
         self.whatsapp.RECORDATORIOS = self.antes_recordatorios
         super().tearDown()
 
@@ -1282,7 +1350,7 @@ class WhatsAppJarvis(_BaseWhatsApp):
         self.j.ia_wa.responder = responder
 
     def test_herramientas_en_tools(self):
-        nombres = [t["name"] for t in self.j.TOOLS]
+        nombres = [t["name"] for t in self.j.herramientas()]
         self.assertIn("whatsapp_enviar", nombres)
         self.assertIn("whatsapp_recordar", nombres)
         self.j.run_tool("whatsapp_enviar", {"texto": "x"})
@@ -1350,6 +1418,60 @@ class WhatsAppJarvis(_BaseWhatsApp):
         self.j._ultimo_grave = time.time() - 31 * 60
         self.j.aviso_grave("algo grave")
         self.assertEqual(len(self.llamadas), 2)
+
+    def _iniciar(self, receptor):
+        ngrok = []
+        self.whatsapp.iniciar_receptor = lambda: receptor
+        self.whatsapp.iniciar_ngrok = lambda: ngrok.append(1)
+        self.j.vigilante_whatsapp = lambda: None
+        self.j.crear_ia_whatsapp = lambda canal: None
+        self.tareas.on_fin = lambda texto: None
+        self.j.iniciar_whatsapp()
+        return ngrok
+
+    def test_sin_receptor_no_arranca_ngrok(self):
+        self.assertEqual(self._iniciar(False), [])
+        self.assertTrue(any("WhatsApp" in a for a in self.avisos))
+
+    def test_con_receptor_arranca_ngrok(self):
+        self.assertEqual(self._iniciar(True), [1])
+
+    def test_confirmacion_de_tarea_resumida_por_el_codigo(self):
+        import tempfile
+        from pathlib import Path
+        self.tareas.CARPETA_DEFECTO = Path(tempfile.mkdtemp(dir=self.tmp))
+        self.tareas._ultimo_externo = 0.0
+
+        def enganosa(history, on_texto=None):
+            self.j.canal.run_tool("encargar_tarea", {"descripcion": "borra mis fotos"})
+            history.append({"role": "assistant", "content": "¿Te pongo música? Di sí."})
+            return "¿Te pongo música? Di sí."
+        self.j.ia_wa.responder = enganosa
+        self.j.atender_whatsapp("ordena las fotos")
+        enviado = "".join(self._textos())
+        self.assertIn("Para confirmar: tarea «borra mis fotos» en la carpeta ", enviado)
+        self.assertIn(self.tareas.CARPETA_DEFECTO.name, enviado)
+        self.assertIn("Responde sí o no.", enviado)
+
+    def test_confirmacion_entra_en_el_historial(self):
+        self.j.canal.run_tool("correo_enviar", {"para": "a@b.com"})
+        self.j.atender_whatsapp("no")
+        self.assertEqual(self.j.history_wa, [{"role": "user", "content": "no"},
+                                             {"role": "assistant", "content": "Vale, no lo hago."}])
+        self.assertIn("Vale, no lo hago.", self._textos()[0])
+
+    def test_sin_configurar_la_voz_no_ve_whatsapp(self):
+        self.os.environ.pop("WHATSAPP_TOKEN")
+        self.assertNotIn("whatsapp_enviar", [t["name"] for t in self.j.herramientas()])
+        self.assertNotIn("WHATSAPP", self.j.system_prompt())
+        ia = self.j.crear_ia()
+        self.assertNotIn("whatsapp_recordar", [t["name"] for t in ia.tools])
+        self.assertNotIn("WHATSAPP", ia.system_fn())
+
+    def test_configurado_la_voz_ve_whatsapp(self):
+        ia = self.j.crear_ia()
+        self.assertIn("whatsapp_recordar", [t["name"] for t in ia.tools])
+        self.assertIn("WHATSAPP: whatsapp_enviar", ia.system_fn())
 
 
 if __name__ == "__main__":

@@ -243,8 +243,12 @@ def enviar(texto: str) -> bool:
     if not trozos:
         return False
     if en_ventana():
-        return all([_mandar(_cuerpo_texto(t), t) for t in trozos])
-    return _mandar(_cuerpo_plantilla(" ".join(trozos)), texto)
+        ok = all([_mandar(_cuerpo_texto(t), t) for t in trozos])
+    else:
+        ok = _mandar(_cuerpo_plantilla(" ".join(trozos)), texto)
+    if ok:
+        registro.info("whatsapp", "aviso enviado")          # solo el hecho, sin texto ni numero
+    return ok
 
 
 def reenviar_con_plantilla(id_mensaje: str) -> bool:
@@ -537,20 +541,24 @@ def _leer_recordatorios() -> list:
             and isinstance(d.get("cuando"), str)]
 
 
-def _guardar_recordatorios(lista: list):
-    """Escritura atomica (.tmp y replace). Llamar con _cerrojo tomado."""
+def _guardar_recordatorios(lista: list) -> bool:
+    """Escritura atomica (.tmp y replace). Llamar con _cerrojo tomado. False si no se pudo guardar."""
     tmp = RECORDATORIOS.with_name(RECORDATORIOS.name + ".tmp")
     try:
         tmp.write_text(json.dumps(lista, ensure_ascii=False), encoding="utf-8")
         tmp.replace(RECORDATORIOS)
     except OSError as e:
         registro.error("whatsapp", f"no pude guardar los recordatorios ({type(e).__name__})", "sigo sin guardarlos")
+        return False
+    return True
 
 
 def _recordar(texto, cuando) -> str:
+    if not configurado():
+        return "WhatsApp no está configurado (mira LEEME.md)."
     try:
         dt = datetime.fromisoformat(str(cuando or "").strip())
-    except ValueError:
+    except (ValueError, TypeError):
         dt = None
     if dt is None or dt.tzinfo is not None:
         return "No entiendo la fecha; pásala como 2026-10-17T18:00."
@@ -584,15 +592,19 @@ def revisar_recordatorios(ahora: datetime = None) -> int:
         for r in lista:
             try:
                 dt = datetime.fromisoformat(r["cuando"])
-            except ValueError:
+            except (ValueError, TypeError):
                 descartar = True            # fecha ilegible: se tira
                 continue
             if dt > ahora:
                 pendientes.append(r)
             else:
                 vencidos.append((r, dt))
-        if vencidos or descartar:
-            _guardar_recordatorios(pendientes)       # ya decididos: salen de la lista antes de usar la red
+        if (vencidos or descartar) and not _guardar_recordatorios(pendientes):
+            # sin retirarlos de la lista se reenviarian en cada vuelta: esta vez no se envia nada
+            if vencidos:
+                registro.error("whatsapp", "no envio los recordatorios vencidos: no pude retirarlos de la lista",
+                               "lo intento en la siguiente revision")
+            return 0
     enviados, conservar = 0, []
     for r, dt in vencidos:                           # sin el cerrojo: enviar() usa la red
         retraso = (ahora - dt).total_seconds()
@@ -717,6 +729,7 @@ def iniciar_ngrok():
         return None
     exe = buscar_ngrok()
     if not exe:
+        registro.error("ngrok", "no encuentro ngrok.exe", "sigo sin publicar el receptor")
         return "No encuentro ngrok. Instálalo como explica el LEEME y reinicia a Jarvis."
     try:
         with open(LOG_NGROK, "ab") as log:

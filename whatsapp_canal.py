@@ -48,7 +48,7 @@ class Canal:
 
     def antes_de_la_ia(self, texto):
         """Decide la confirmacion. Devuelve el texto a responder, o None para que siga la IA."""
-        r = tareas.respuesta_confirmacion(texto)
+        r = tareas.respuesta_confirmacion(texto, estricto=True)
         if r is not None:
             self._pendiente = None      # el mensaje ya se ha gastado en la tarea: nada queda armado
             return r
@@ -57,7 +57,7 @@ class Canal:
             return None
         self._pendiente = None
         t = tareas.frase_normalizada(texto)
-        if tareas._SI.match(t):
+        if tareas.es_si_estricto(t):           # "vale, pero..." o "claro que no" no son un si
             return self._run(p["nombre"], p["args"])
         if tareas._NO.match(t):
             return "Vale, no lo hago."
