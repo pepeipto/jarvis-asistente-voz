@@ -906,6 +906,7 @@ class WhatsAppCitas(_BaseWhatsApp):
         self.gc = google_conector
         self.antes_pruebas = dict(google_conector._pruebas)
         self.os.environ.pop("WHATSAPP_AVISO_MIN", None)
+        self.ahora = 1_800_000_000.0        # instante fijo: los avisos no dependen del reloj
 
     def tearDown(self):
         self.gc._pruebas.clear()
@@ -915,8 +916,8 @@ class WhatsAppCitas(_BaseWhatsApp):
 
     def _ev(self, minutos=12, id="e1"):
         from datetime import datetime, timedelta
-        ini = (datetime.now() + timedelta(minutes=minutos)).replace(second=0, microsecond=0)
-        return {"id": id, "titulo": "Dentista", "inicio": ini}
+        return {"id": id, "titulo": "Dentista",
+                "inicio": datetime.fromtimestamp(self.ahora) + timedelta(minutes=minutos)}
 
     def test_eventos_proximos_sin_dia_completo(self):
         from datetime import datetime, timedelta
@@ -948,8 +949,8 @@ class WhatsAppCitas(_BaseWhatsApp):
 
     def test_cita_avisada_una_vez(self):
         ev = self._ev(12)
-        self.assertEqual(self.whatsapp.revisar_citas([ev]), 1)
-        self.assertEqual(self.whatsapp.revisar_citas([ev]), 0)
+        self.assertEqual(self.whatsapp.revisar_citas([ev], self.ahora), 1)
+        self.assertEqual(self.whatsapp.revisar_citas([ev], self.ahora), 0)
         self.assertEqual(len(self.llamadas), 1)
         texto = str(self.llamadas[0]["json"])
         self.assertIn("Dentista", texto)
@@ -958,21 +959,21 @@ class WhatsAppCitas(_BaseWhatsApp):
 
     def test_no_repite_tras_reinicio(self):
         ev = self._ev()
-        self.assertEqual(self.whatsapp.revisar_citas([ev]), 1)
+        self.assertEqual(self.whatsapp.revisar_citas([ev], self.ahora), 1)
         self.whatsapp._cache_estado = None
-        self.assertEqual(self.whatsapp.revisar_citas([ev]), 0)
+        self.assertEqual(self.whatsapp.revisar_citas([ev], self.ahora), 0)
 
     def test_cita_movida_avisa_de_nuevo(self):
-        self.assertEqual(self.whatsapp.revisar_citas([self._ev(12)]), 1)
-        self.assertEqual(self.whatsapp.revisar_citas([self._ev(14)]), 1)
+        self.assertEqual(self.whatsapp.revisar_citas([self._ev(12)], self.ahora), 1)
+        self.assertEqual(self.whatsapp.revisar_citas([self._ev(14)], self.ahora), 1)
 
     def test_limpia_antiguas(self):
         import time
         w = self.whatsapp
         d = w._leer_estado()
-        d["citas_avisadas"] = {"viejo|2026-01-01T10:00:00": time.time() - 25 * 3600}
+        d["citas_avisadas"] = {"viejo|2026-01-01T10:00:00": self.ahora - 25 * 3600}
         w._guardar_estado(d)
-        w.revisar_citas([])
+        w.revisar_citas([], self.ahora)
         self.assertEqual(w._leer_estado()["citas_avisadas"], {})
 
     def test_fallo_de_envio_no_marca_avisada(self):
@@ -980,7 +981,7 @@ class WhatsAppCitas(_BaseWhatsApp):
             raise RuntimeError("sin red")
         self.whatsapp._post = malo
         ev = self._ev()
-        self.assertEqual(self.whatsapp.revisar_citas([ev]), 0)
+        self.assertEqual(self.whatsapp.revisar_citas([ev], self.ahora), 0)
         self.assertEqual(self.whatsapp._leer_estado()["citas_avisadas"], {})
 
     def test_aviso_min(self):
