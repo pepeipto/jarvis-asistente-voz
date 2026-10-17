@@ -13,6 +13,8 @@ Parte 2: receptor del webhook (HTTP solo en 127.0.0.1; ngrok lo expone a interne
   y solo se anota el hecho (nunca el numero ni el texto).
 - Cada mensaje se atiende una vez (id) y como mucho 20 por minuto.
 
+Parte 3: herramientas de la IA (whatsapp_enviar, whatsapp_recordar) y recordatorios en whatsapp_recordatorios.json.
+
 Seguridad:
 - El token y el numero salen de .env (nunca van al repositorio) y se leen en cada llamada.
 - Solo se escribe a WHATSAPP_MI_NUMERO: ningun texto de la IA ni de fuera puede cambiar el destinatario.
@@ -27,6 +29,7 @@ import re
 import threading
 import time
 from collections import OrderedDict, deque
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -46,9 +49,12 @@ MAX_POR_MINUTO = 20             # mensajes tuyos que se atienden por minuto
 MAX_VISTOS = 200               # ids de mensajes recordados para no atender dos veces el mismo
 MAX_CUERPO = 1_000_000          # bytes maximos de una peticion
 ERROR_FUERA_DE_VENTANA = 131047 # Meta: no se puede mandar texto libre fuera de las 24 h
+RETRASO_AVISO = 300             # segundos de retraso a partir de los cuales se avisa «(con retraso)»
+MAX_RETRASO = 12 * 3600         # un recordatorio mas viejo que esto se descarta
 AVISO_NO_TEXTO = "Por ahora solo leo texto."
 
 ESTADO = Path(__file__).resolve().with_name("whatsapp_estado.json")
+RECORDATORIOS = Path(__file__).resolve().with_name("whatsapp_recordatorios.json")
 _cache_estado = None            # copia en memoria del json (None = aun sin leer)
 _cerrojo = threading.Lock()
 _enviados = OrderedDict()       # id de mensaje -> texto enviado
@@ -478,3 +484,108 @@ def parar_receptor() -> None:
         if h is not None and h.is_alive():
             h.join(timeout=2)
     _hilo_servidor = _hilo_despacho = None
+
+
+# ---------------------------------------------------------------- herramientas de la IA y recordatorios
+
+_DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+_FMT_ISO = "%Y-%m-%dT%H:%M:%S"
+
+HERRAMIENTAS = [
+    {"name": "whatsapp_enviar",
+     "description": "Envía un mensaje de WhatsApp al usuario (solo a él; no se puede elegir otro destinatario).",
+     "input_schema": {"type": "object",
+                      "properties": {"texto": {"type": "string", "description": "El mensaje a enviar."}},
+                      "required": ["texto"]}},
+    {"name": "whatsapp_recordar",
+     "description": "Programa un recordatorio que Jarvis le enviará por WhatsApp al usuario a la hora indicada.",
+     "input_schema": {"type": "object",
+                      "properties": {"texto": {"type": "string", "description": "Lo que hay que recordar."},
+                                     "cuando": {"type": "string",
+                                                "description": "Fecha y hora local en formato ISO YYYY-MM-DDTHH:MM, por ejemplo 2026-10-17T18:00."}},
+                      "required": ["texto", "cuando"]}},
+]
+
+
+def _leer_recordatorios() -> list:
+    """Lista de {"texto", "cuando"}. Llamar con _cerrojo tomado."""
+    try:
+        datos = json.loads(RECORDATORIOS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(datos, list):
+        return []
+    return [d for d in datos if isinstance(d, dict) and isinstance(d.get("texto"), str)
+            and isinstance(d.get("cuando"), str)]
+
+
+def _guardar_recordatorios(lista: list):
+    """Escritura atomica (.tmp y replace). Llamar con _cerrojo tomado."""
+    tmp = RECORDATORIOS.with_name(RECORDATORIOS.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(lista, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(RECORDATORIOS)
+    except OSError as e:
+        registro.error("whatsapp", f"no pude guardar los recordatorios ({type(e).__name__})", "sigo sin guardarlos")
+
+
+def _recordar(texto, cuando) -> str:
+    try:
+        dt = datetime.fromisoformat(str(cuando or "").strip())
+    except ValueError:
+        dt = None
+    if dt is None or dt.tzinfo is not None:
+        return "No entiendo la fecha; pásala como 2026-10-17T18:00."
+    if dt <= datetime.now():
+        return "Esa hora ya ha pasado."
+    with _cerrojo:
+        lista = _leer_recordatorios()
+        lista.append({"texto": str(texto), "cuando": dt.strftime(_FMT_ISO)})
+        _guardar_recordatorios(lista)
+    return f"Te lo recordaré por WhatsApp el {_DIAS[dt.weekday()]} {dt.day:02d}/{dt.month:02d} a las {dt:%H:%M}."
+
+
+def ejecutar(nombre: str, args: dict):
+    """Ejecuta una herramienta de WhatsApp; devuelve None si el nombre no es de este modulo."""
+    args = args if isinstance(args, dict) else {}
+    if nombre == "whatsapp_enviar":
+        if not configurado():
+            return "WhatsApp no está configurado (mira LEEME.md)."
+        return "Enviado a tu WhatsApp." if enviar(str(args.get("texto", ""))) else "No he podido enviarlo por WhatsApp."
+    if nombre == "whatsapp_recordar":
+        return _recordar(args.get("texto", ""), args.get("cuando", ""))
+    return None
+
+
+def revisar_recordatorios(ahora: datetime = None) -> int:
+    """Envia los recordatorios que ya tocan y devuelve cuantos se han enviado."""
+    ahora = ahora or datetime.now()
+    with _cerrojo:
+        lista = _leer_recordatorios()
+        pendientes, vencidos, descartar = [], [], False
+        for r in lista:
+            try:
+                dt = datetime.fromisoformat(r["cuando"])
+            except ValueError:
+                descartar = True            # fecha ilegible: se tira
+                continue
+            if dt > ahora:
+                pendientes.append(r)
+            else:
+                vencidos.append((r, dt))
+        if vencidos or descartar:
+            _guardar_recordatorios(pendientes)       # ya decididos: salen de la lista antes de usar la red
+    enviados, conservar = 0, []
+    for r, dt in vencidos:                           # sin el cerrojo: enviar() usa la red
+        retraso = (ahora - dt).total_seconds()
+        if retraso > MAX_RETRASO:
+            continue
+        texto = r["texto"] + (" (con retraso)" if retraso > RETRASO_AVISO else "")
+        if enviar(texto):
+            enviados += 1
+        else:
+            conservar.append(r)                      # se reintenta en la siguiente revision
+    if conservar:
+        with _cerrojo:
+            _guardar_recordatorios(_leer_recordatorios() + conservar)
+    return enviados
