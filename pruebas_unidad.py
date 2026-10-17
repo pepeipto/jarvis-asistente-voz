@@ -423,10 +423,10 @@ class ContenidoNoFiable(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-class WhatsAppEnvio(unittest.TestCase):
-    """whatsapp.py: envio por la API de Meta (sin red y sin tocar el estado real)."""
+class _BaseWhatsApp(unittest.TestCase):
+    """Preparacion comun de las pruebas de whatsapp.py (sin red y sin tocar el estado real)."""
     VARS = ("WHATSAPP_TOKEN", "WHATSAPP_PHONE_ID", "WHATSAPP_MI_NUMERO", "WHATSAPP_PLANTILLA",
-            "WHATSAPP_API_VERSION")
+            "WHATSAPP_API_VERSION", "WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN", "WHATSAPP_PUERTO")
 
     def setUp(self):
         import os
@@ -442,6 +442,8 @@ class WhatsAppEnvio(unittest.TestCase):
                            "WHATSAPP_MI_NUMERO": "+34 600 111 222"})
         os.environ.pop("WHATSAPP_PLANTILLA", None)
         os.environ.pop("WHATSAPP_API_VERSION", None)
+        os.environ.pop("WHATSAPP_PUERTO", None)
+        os.environ.update({"WHATSAPP_APP_SECRET": "SECRETO", "WHATSAPP_VERIFY_TOKEN": "VT"})
         whatsapp.ESTADO = Path(self.tmp) / "whatsapp_estado.json"
         whatsapp._cache_estado = None
         whatsapp._enviados.clear()
@@ -464,6 +466,10 @@ class WhatsAppEnvio(unittest.TestCase):
             else:
                 self.os.environ[v] = valor
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+class WhatsAppEnvio(_BaseWhatsApp):
+    """whatsapp.py: envio por la API de Meta."""
 
     def test_dentro_de_ventana_texto_libre(self):
         import time
@@ -550,6 +556,202 @@ class WhatsAppEnvio(unittest.TestCase):
         self.assertFalse(self.whatsapp.configurado())
         self.assertFalse(self.whatsapp.enviar("x"))
         self.assertEqual(self.llamadas, [])
+
+
+class WhatsAppReceptor(_BaseWhatsApp):
+    """whatsapp.py: receptor del webhook (firma de Meta, solo tu numero, sin duplicados ni exceso)."""
+
+    def setUp(self):
+        super().setUp()
+        w = self.whatsapp
+        self.entregados = []
+        self.antes_al_recibir = w.al_recibir
+        w.al_recibir = self.entregados.append
+        w._reiniciar_receptor()
+
+    def tearDown(self):
+        self.whatsapp.parar_receptor()
+        self.whatsapp.al_recibir = self.antes_al_recibir
+        self.whatsapp._reiniciar_receptor()
+        super().tearDown()
+
+    def firma(self, cuerpo, secreto=b"SECRETO"):
+        import hashlib
+        import hmac
+        return "sha256=" + hmac.new(secreto, cuerpo, hashlib.sha256).hexdigest()
+
+    def carga(self, mensajes=(), estados=()):
+        value = {}
+        if mensajes:
+            value["messages"] = list(mensajes)
+        if estados:
+            value["statuses"] = list(estados)
+        return {"object": "whatsapp_business_account", "entry": [{"changes": [{"value": value}]}]}
+
+    def texto(self, cuerpo="hola", de="34600111222", id_="wamid.X"):
+        return {"from": de, "id": id_, "type": "text", "text": {"body": cuerpo}}
+
+    def post(self, carga, firmado=True, cabecera=None):
+        import json
+        cuerpo = json.dumps(carga).encode("utf-8")
+        cab = {}
+        if cabecera is not None:
+            cab["X-Hub-Signature-256"] = cabecera
+        elif firmado:
+            cab["x-hub-signature-256"] = self.firma(cuerpo)       # minusculas: se busca sin distinguir
+        return self.whatsapp.procesar_peticion("POST", "/whatsapp", cab, cuerpo)
+
+    def test_verificacion_ok(self):
+        r = self.whatsapp.procesar_peticion(
+            "GET", "/whatsapp?hub.mode=subscribe&hub.verify_token=VT&hub.challenge=123", {}, b"")
+        self.assertEqual(r, (200, b"123"))
+
+    def test_verificacion_mala(self):
+        r = self.whatsapp.procesar_peticion(
+            "GET", "/whatsapp?hub.mode=subscribe&hub.verify_token=OTRO&hub.challenge=123", {}, b"")
+        self.assertEqual(r[0], 403)
+        self.assertNotIn(b"123", r[1])
+
+    def test_firma_valida_entrega(self):
+        self.assertFalse(self.whatsapp.en_ventana())
+        self.assertEqual(self.post(self.carga([self.texto("hola")]))[0], 200)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, ["hola"])
+        self.assertTrue(self.whatsapp.en_ventana())
+
+    def test_firma_mala_403(self):
+        import json
+        carga = self.carga([self.texto("hola")])
+        buena = self.firma(json.dumps(carga).encode("utf-8"))
+        mala = buena[:-1] + ("0" if buena[-1] != "0" else "1")
+        casos = [self.post(carga, cabecera=mala),
+                 self.post(carga, firmado=False),
+                 self.post(carga, cabecera="sha256=" + self.firma(b"otro")[7:]),
+                 self.post(carga, cabecera="ñ")]
+        for r in casos:
+            self.assertEqual(r[0], 403)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, [])
+        self.assertFalse(self.whatsapp.en_ventana())
+
+    def test_sin_secreto_403(self):
+        import json
+        self.os.environ.pop("WHATSAPP_APP_SECRET")
+        cuerpo = json.dumps(self.carga([self.texto("hola")])).encode("utf-8")
+        # con secreto vacio, una firma calculada con clave vacia tampoco vale
+        r = self.whatsapp.procesar_peticion("POST", "/whatsapp",
+                                            {"X-Hub-Signature-256": self.firma(cuerpo, b"")}, cuerpo)
+        self.assertEqual(r[0], 403)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, [])
+
+    def test_otro_numero_ignorado(self):
+        r = self.post(self.carga([self.texto("secreto-ajeno", de="34999999999")]))
+        self.assertEqual(r[0], 200)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, [])
+        self.assertEqual(self.llamadas, [])
+        self.assertFalse(self.whatsapp.en_ventana())
+        self.registro.info("prueba", "fin")        # garantiza que el archivo existe
+        log = self.registro.ARCHIVO.read_text(encoding="utf-8")
+        self.assertNotIn("34999999999", log)
+        self.assertNotIn("secreto-ajeno", log)
+
+    def test_repetido_una_vez(self):
+        carga = self.carga([self.texto("hola")])
+        self.post(carga)
+        self.post(carga)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, ["hola"])
+
+    def test_limite_por_minuto(self):
+        for i in range(25):
+            self.post(self.carga([self.texto(f"m{i}", id_=f"wamid.{i}")]))
+        self.whatsapp._despachar()
+        self.assertEqual(len(self.entregados), 20)
+
+    def test_varios_mensajes_y_solo_estados(self):
+        carga = {"object": "whatsapp_business_account", "entry": [
+            {"changes": [{"value": {"messages": [self.texto("uno", id_="a"), self.texto("dos", id_="b")]}}]},
+            {"changes": [{"value": {"messages": [self.texto("tres", id_="c")]}}]}]}
+        self.assertEqual(self.post(carga)[0], 200)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, ["uno", "dos", "tres"])
+        del self.entregados[:]
+        r = self.post(self.carga(estados=[{"id": "wamid.9", "status": "delivered"}]))
+        self.assertEqual(r[0], 200)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, [])
+
+    def test_json_raro_200(self):
+        import json
+        for cuerpo in (b"no es json", b"[]", json.dumps({"entry": "x"}).encode(),
+                       json.dumps({"entry": [None, {"changes": [None, {"value": []}]}]}).encode()):
+            r = self.whatsapp.procesar_peticion("POST", "/whatsapp",
+                                                {"X-Hub-Signature-256": self.firma(cuerpo)}, cuerpo)
+            self.assertEqual(r[0], 200)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, [])
+
+    def test_fallo_131047_reenvia_plantilla(self):
+        import time
+        self.whatsapp.marcar_recibido(time.time())
+        self.assertTrue(self.whatsapp.enviar("hola"))
+        self.assertEqual(self.llamadas[-1]["json"]["type"], "text")
+        r = self.post(self.carga(estados=[{"id": "wamid.1", "status": "failed",
+                                           "errors": [{"code": 131047}]}]))
+        self.assertEqual(r[0], 200)
+        self.whatsapp._despachar()
+        j = self.llamadas[-1]["json"]
+        self.assertEqual(j["type"], "template")
+        self.assertEqual(j["template"]["components"][0]["parameters"][0]["text"], "hola")
+
+    def test_no_texto(self):
+        antes = len(self.llamadas)
+        r = self.post(self.carga([{"from": "34600111222", "id": "wamid.A", "type": "audio",
+                                   "audio": {"id": "1"}}]))
+        self.assertEqual(r[0], 200)
+        self.whatsapp._despachar()
+        self.assertEqual(self.entregados, [])
+        self.assertEqual(len(self.llamadas), antes + 1)
+        self.assertIn("Por ahora solo leo texto.", str(self.llamadas[-1]["json"]))
+
+    def test_servidor_real(self):
+        import socket
+        import requests
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        puerto = s.getsockname()[1]
+        s.close()
+        self.os.environ["WHATSAPP_PUERTO"] = str(puerto)
+        try:
+            self.assertTrue(self.whatsapp.iniciar_receptor())
+            url = f"http://127.0.0.1:{puerto}/whatsapp"
+            r = requests.get(url + "?hub.mode=subscribe&hub.verify_token=VT&hub.challenge=123", timeout=5)
+            self.assertEqual((r.status_code, r.content), (200, b"123"))
+            r = requests.post(url, data=b"{}", timeout=5)
+            self.assertEqual(r.status_code, 403)
+        finally:
+            self.whatsapp.parar_receptor()
+
+    def test_puerto_ocupado_false(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        s.listen(1)
+        try:
+            self.os.environ["WHATSAPP_PUERTO"] = str(s.getsockname()[1])
+            self.assertFalse(self.whatsapp.iniciar_receptor())
+        finally:
+            s.close()
+            self.whatsapp.parar_receptor()
+
+    def test_sin_secreto_no_arranca(self):
+        self.os.environ.pop("WHATSAPP_APP_SECRET")
+        self.assertFalse(self.whatsapp.iniciar_receptor())
+        self.os.environ["WHATSAPP_APP_SECRET"] = "SECRETO"
+        self.os.environ.pop("WHATSAPP_TOKEN")
+        self.assertFalse(self.whatsapp.iniciar_receptor())
 
 
 if __name__ == "__main__":
