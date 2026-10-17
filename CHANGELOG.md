@@ -10,6 +10,45 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.7.0] - 17/10/2026 - Oído fiable y Jarvis programador
+**Por qué:** a veces Jarvis no escuchaba. Se reprodujo en este PC y se encontraron tres causas.
+
+**Oído (arreglos):**
+- **Cambiaba de micrófono al azar.** El OBSBOT Tiny 2 Lite tiene supresión de ruido: en silencio da casi
+  ceros (pico 1 de 32768) y Jarvis lo daba por «silenciado». En cada arranque elegía otro al azar
+  (MSI Sound Tune, Realtek...), lejos de ti. Medido: 3 arranques, 3 elecciones distintas. Ahora solo es
+  «mudo» un micrófono que da ceros exactos (silenciado o sin permiso). Tras el arreglo: 3 de 3, el OBSBOT.
+- **Tras 3 minutos callado, se reiniciaba el oído** por la misma confusión, y podía volver a cambiar de
+  micrófono. Arreglado con el mismo criterio.
+- **Nunca elige solo una entrada que no es un micrófono** (líneas, «Stream Out», cables virtuales).
+- **Podía quedarse sordo para siempre:** si algo fallaba mientras preparaba la respuesta, el micrófono
+  quedaba silenciado sin fin. Ahora siempre vuelve a escuchar.
+- **Nuevo ajuste `UMBRAL_VOZ`** (`ajustes.env`, por defecto 0.01): bájalo si no te oye cuando hablas bajo o
+  lejos; súbelo si se activa con ruidos. Al arrancar, la consola muestra el umbral usado.
+
+**Jarvis programador (nuevo):**
+- **Modo programador** en `encargar_tarea` (`programar=true`): Claude Code ya no solo lee y edita; también
+  ejecuta Python, pruebas (pytest/unittest), pip/uv, Node/npm, Rust, Go y .NET, y hace commits locales en una
+  rama nueva. Sigue las pautas de un programador senior (leer antes, escribir y pasar pruebas, commits
+  pequeños, dependencias en un entorno virtual). Límite de 40 min por tarea (15 en las normales).
+  Nunca `git push`, nunca consola libre, y sigue pidiendo tu «sí».
+- **Continuar la última tarea** (`continuar=true`): «Jarvis, ahora añade...» reanuda la misma sesión de Claude
+  Code, en la misma carpeta y con todo su contexto (también pide «sí»).
+- **Credenciales correctas para Claude Code:** con OmniRoute usa el token y los modelos `cc/...`; con la API
+  directa de Anthropic usa la clave y el nombre sin `cc/` (antes le quitaba la clave y fallaba con
+  «Not logged in»).
+- **Errores en español:** «no tiene saldo», «no tiene sesión», «¿está OmniRoute abierto?» en vez del error
+  en inglés.
+- **Seguridad, a tener en cuenta:** poder ejecutar código da mucho poder. Por eso se mantiene la
+  confirmación por voz y el bloqueo de 3 min tras leer correos, archivos o internet.
+
+**Comprobado:** 137 pruebas automáticas (12 nuevas); prueba real del micrófono en este PC (elección,
+calibración y 8 min de silencio simulados sin reinicio); prueba real de programación por OmniRoute: Jarvis
+encargó crear `calculo.py` con pruebas (4 pasan, 14 s) y luego continuó la sesión añadiendo `resta` (7 pasan, 11 s).
+**Sin comprobar todavía:** una conversación hablada larga con tu voz real.
+**Para que funcione el modo programador:** OmniRoute abierto (tu `.env` apunta ahora a la API directa,
+que no tiene saldo), recargar saldo de la API, o iniciar sesión en Claude Code (`claude` y luego `/login`).
+
 ## [1.6.0] - 17/10/2026 - Jarvis en WhatsApp
 Diseño: `docs/superpowers/specs/2026-10-16-jarvis-whatsapp-design.md`.
 

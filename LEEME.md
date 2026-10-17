@@ -31,6 +31,10 @@ Ejemplos:
 - "Jarvis, encarga una tarea: ordena los PDF de descargas en carpetas por año."  Jarvis te repite la
   tarea y espera a que digas "si" o "adelante". La hace Claude Code en segundo plano (por defecto en
   Documentos\Jarvis\tareas) y te avisa al terminar. "Jarvis, como va la tarea?" / "cancela la tarea".
+- "Jarvis, programa un script en Documentos\proyectos\fotos que renombre las fotos por fecha, con pruebas."
+  Modo programador (v1.7): Claude Code escribe el codigo, lo ejecuta, pasa las pruebas y hace commits en una
+  rama nueva (nunca sube nada a internet). Despues: "Jarvis, ahora añade que tambien ordene por carpetas"
+  continua la misma tarea con todo lo que ya sabe. Siempre te pide "si" antes de empezar.
 
 ## Velocidad con Claude en la nube (v1.5, 16/10/2026)
 Tiempo hasta la primera palabra de la respuesta, 10 frases reales: **0,93 s de media** (0,74 s el mejor
@@ -74,7 +78,8 @@ Al empezar la noche era 3,2 s. Lo que lo consigue:
   Otras opciones: `STT_VIVO=0` (transcripcion clasica), `LLM_PROVEEDOR=anthropic` (usar Claude,
   necesita saldo de API), `INTERFAZ=clasica` (ventana simple), `WAKE_WORD=...`,
   `MICROFONO=Realtek` (fija un micrófono por parte de su nombre; si no, Jarvis usa el predeterminado
-  y, si está mudo, cambia solo a otro que funcione).
+  y, si está silenciado de verdad, cambia solo a otro que funcione), `UMBRAL_VOZ=0.006` (si no te oye
+  cuando hablas bajo; súbelo a 0.02 si se activa con ruidos).
 - Historial de versiones y mejoras pendientes de aprobar: `CHANGELOG.md`.
 - Si algo falla, mira `errores_log.txt`: cada fallo, qué lo causó y qué hizo Jarvis para arreglarlo.
 - Cada versión está guardada con git: `git tag` las lista y `git checkout v1.3.1` vuelve a una anterior.
