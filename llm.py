@@ -32,12 +32,17 @@ AVISO_SIN_HERRAMIENTA = ("[Aviso del sistema] En esta respuesta no has llamado a
                          "llama ahora a la herramienta adecuada. Si no hacia falta ninguna, responde de nuevo sin afirmar "
                          "que has guardado o encontrado algo.")
 CTX = int(os.getenv("OLLAMA_CTX") or 0)
+# Buscador de Claude (servidor de Anthropic): busca en todo internet y cita fuentes. La version 20260209 no
+# funciona a traves de OmniRoute (medido el 17/10/2026); la 20250305 si. BUSQUEDA_CLAUDE=0 lo desactiva.
+BUSQUEDA_CLAUDE = {"type": "web_search_20250305", "name": "web_search", "max_uses": 5,
+                   "user_location": {"type": "approximate", "country": "ES", "timezone": "Europe/Madrid"}}
+APARTAR = 600               # s sin reintentar un proveedor sin saldo o con la clave mal (no se arregla solo)
 ESPERA_PRIMER_TOKEN = 4.0    # segundos sin respuesta de la nube antes de pasar al modelo gratuito
 INACTIVIDAD = 240            # tras 4 min sin usar la nube, la primera respuesta tarda ~3 s mas: aviso minimo    # 0 = automatico (8192, o 6144 en modelos de 30B o mas)
 
 
 RESPUESTA_RAPIDA = (os.getenv("RESPUESTA_RAPIDA") or "1") != "0"
-CONSULTAS = {"buscar_en_cerebro", "leer_nota", "notas_recientes", "procesar_bandeja",
+CONSULTAS = {"buscar_en_cerebro", "leer_nota", "notas_recientes", "procesar_bandeja", "leer_web", "tiempo",
              "calendario_eventos", "correo_buscar", "correo_leer", "drive_buscar", "drive_leer",
              "buscar_archivos", "leer_archivo", "listar_carpeta", "buscar_web"}
 ESPERAS = ["Déjame mirar. ", "Un momento. ", "Lo compruebo. "]
@@ -73,10 +78,11 @@ def confirmacion_directa(calls, resultados):
 class IAError(Exception):
     """Error de IA con un texto corto para decir en voz alta y otro con el detalle para la pantalla."""
 
-    def __init__(self, hablado, detalle):
+    def __init__(self, hablado, detalle, permanente=False):
         super().__init__(detalle)
         self.hablado = hablado
         self.detalle = detalle
+        self.permanente = permanente        # sin saldo o clave mala: reintentar enseguida no sirve
 
 
 def _limpiar(texto):
@@ -84,11 +90,51 @@ def _limpiar(texto):
     return re.sub(r"<think>.*?</think>", "", texto or "", flags=re.S).strip()
 
 
+MARCA_BUSQUEDA = "[registro interno de Jarvis, no se dice en voz alta]"
+_MARCA_RE = re.compile(r"\s*\[registro interno de Jarvis[^\]]*\][^\n]*", re.I)
+
+
+def _fuentes(bloques):
+    """Lo que busco Claude en internet y las paginas que obtuvo, en una linea (o "" si no busco)."""
+    consultas, paginas = [], []
+    for b in bloques:
+        if getattr(b, "type", "") == "server_tool_use":
+            q = (getattr(b, "input", None) or {}).get("query")
+            if q:
+                consultas.append(f"«{q}»")
+        elif getattr(b, "type", "") == "web_search_tool_result":
+            for r in (getattr(b, "content", None) or [])[:5] if isinstance(getattr(b, "content", None), list) else []:
+                if getattr(r, "url", None):
+                    paginas.append(f"{getattr(r, 'title', '') or ''} ({r.url})".strip())
+    if not consultas:
+        return ""
+    return (f"{MARCA_BUSQUEDA} Para esta respuesta busqué en internet con web_search: {', '.join(consultas)}."
+            + (f" Resultados: {'; '.join(paginas[:8])}." if paginas else ""))
+
+
+def _a_dict(x):
+    """Bloque de la respuesta (objeto del SDK) a dict para guardarlo y reenviarlo tal cual."""
+    if hasattr(x, "model_dump"):
+        return x.model_dump(exclude_none=True)
+    if isinstance(x, list):
+        return [_a_dict(v) for v in x]
+    if hasattr(x, "__dict__"):
+        return {k: _a_dict(v) for k, v in vars(x).items() if v is not None}
+    return x
+
+
+def _con_fuentes(m):
+    """Texto del asistente para reenviarlo a la IA, con lo que busco (para que sepa que no se lo invento)."""
+    return f"{m.get('content', '')}\n\n{m['busquedas']}".strip() if m.get("busquedas") else m.get("content", "")
+
+
 def _limpiar_parcial(texto):
     """Version de _limpiar para texto que aun se esta generando."""
     t = re.sub(r"<think>.*?</think>", "", texto or "", flags=re.S)
     i = t.find("<think>")
-    return (t[:i] if i != -1 else t).lstrip()
+    t = t[:i] if i != -1 else t
+    j = t.find("[registro interno")                 # si la IA imitara la marca, no se dice en voz alta
+    return (t[:j] if j != -1 else t).lstrip()
 
 
 def _tamano(nombre):
@@ -120,7 +166,9 @@ class IA:
         self.anthropic_key = anthropic_key
         self.anthropic_base_url = anthropic_base_url   # p. ej. OmniRoute (http://localhost:20128)
         self.anthropic_token = anthropic_token         # token Bearer del proxy
-        self.anthropic_model = anthropic_model
+        # La API oficial (api.anthropic.com) no es un proxy: va con la clave y sin los nombres "cc/..." de OmniRoute
+        self.es_proxy = bool(anthropic_base_url) and "api.anthropic.com" not in anthropic_base_url.lower()
+        self.anthropic_model = anthropic_model if self.es_proxy else anthropic_model.split("/")[-1]
         self.modelo_respaldo_nube = modelo_respaldo_nube   # gratuito de OmniRoute si el principal falla
         self.proveedor = (proveedor or "auto").lower()
         self.ollama_model_pref = ollama_model
@@ -136,6 +184,9 @@ class IA:
         self._proxy_estado = (0.0, True)       # (momento, responde) de la ultima comprobacion de OmniRoute
         self.on_reparacion = None              # funcion(origen, texto) para anotar autorreparaciones
         self._ultimo_uso = 0.0                 # ultima vez que se hablo con la nube
+        self._apartado = {}                    # proveedor -> momento hasta el que no se prueba
+        self.busqueda_nube = (os.getenv("BUSQUEDA_CLAUDE") or "1") != "0"   # buscador de Claude en todo internet
+        self.on_externo = None                 # funcion() cuando la IA lee internet por su cuenta
 
     # ------------------------------------------------------------------ descubrimiento
     def modelos_ollama(self, forzar=False):
@@ -169,7 +220,7 @@ class IA:
     def describir(self):
         """Texto corto para mostrar en pantalla: que IA se usara."""
         if self._hay_anthropic() and self.proveedor in ("auto", "anthropic"):
-            via = " (OmniRoute)" if self.anthropic_base_url else ""
+            via = " (OmniRoute)" if self.es_proxy else ""
             return f"Claude · {self.anthropic_model}{via}"
         if self.proveedor in ("auto", "ollama"):
             nombres = self.modelos_ollama()
@@ -196,11 +247,15 @@ class IA:
                     texto = self._anthropic(history, on_texto, modelo=self.modelo_respaldo_nube)
                 else:
                     texto = self._anthropic(history, on_texto)
+                if not (texto or "").strip():      # nunca quedarse callado: probar el siguiente
+                    raise IAError("No me ha llegado respuesta.", f"{prov} devolvio una respuesta vacia")
                 self.activo = prov
                 return texto
             except IAError as e:
                 errores.append(e)
                 del history[n_antes:]              # deshacer lo que haya dejado a medias
+                if e.permanente:
+                    self._apartado[prov] = time.time() + APARTAR
                 if self.on_reparacion and prov != orden[-1]:
                     siguiente = orden[orden.index(prov) + 1]
                     self.on_reparacion("ia", f"{prov} fallo ({e.detalle[:120]}): pruebo con {siguiente}")
@@ -216,9 +271,11 @@ class IA:
         """Proveedores a probar, en orden: la nube primero y Ollama solo de respaldo."""
         if self.proveedor == "ollama" or not self._hay_anthropic():
             return ["ollama"]
-        if self.proveedor == "auto" and self.anthropic_base_url and not self._proxy_responde():
+        if self.proveedor == "auto" and self.es_proxy and not self._proxy_responde():
             return ["ollama"]           # OmniRoute apagado: no esperar ~25 s de reintentos en cada pregunta
-        nube =["anthropic"] + (["anthropic_gratis"] if self.anthropic_base_url and self.modelo_respaldo_nube else [])
+        nube = ["anthropic"] + (["anthropic_gratis"] if self.es_proxy and self.modelo_respaldo_nube else [])
+        ahora = time.time()
+        nube = [p for p in nube if self._apartado.get(p, 0) <= ahora] or (nube if self.proveedor == "anthropic" else [])
         return nube if self.proveedor == "anthropic" else nube + ["ollama"]
 
     # ------------------------------------------------------------------ Ollama
@@ -389,9 +446,13 @@ class IA:
                 self._cliente().messages.create(model=self.anthropic_model, max_tokens=1,
                                                 messages=[{"role": "user", "content": "hola"}])
             except Exception as e:
-                return f"No he podido conectar con Claude al arrancar: {str(e)[:120]}"
+                local = self._precalentar_ollama() if self.proveedor == "auto" else None
+                return f"No he podido conectar con Claude al arrancar: {str(e)[:120]}" + (f" {local}" if local else "")
             self._ultimo_uso = time.time()
             return f"Claude listo ({time.time() - t:.1f} s)."
+        return self._precalentar_ollama()
+
+    def _precalentar_ollama(self):
         nombres = self.modelos_ollama(forzar=True)
         if not nombres:
             return None
@@ -422,7 +483,7 @@ class IA:
             if m["role"] == "user":
                 out.append({"role": "user", "content": m["content"]})
             elif m["role"] == "assistant":
-                d = {"role": "assistant", "content": m.get("content", "")}
+                d = {"role": "assistant", "content": _con_fuentes(m)}
                 if m.get("tool_calls"):
                     d["tool_calls"] = [{"function": {"name": c["name"], "arguments": c["args"]}}
                                        for c in m["tool_calls"]]
@@ -433,7 +494,7 @@ class IA:
 
     # ------------------------------------------------------------------ Anthropic
     def _hay_anthropic(self):
-        return bool(self.anthropic_token if self.anthropic_base_url else self.anthropic_key)
+        return bool(self.anthropic_token if self.es_proxy else self.anthropic_key)
 
     def _proxy_responde(self):
         """True si el proxy (OmniRoute) acepta conexiones. Se comprueba en medio segundo y se recuerda 30 s."""
@@ -455,7 +516,7 @@ class IA:
     def _cliente(self):
         if self._cliente_anthropic is None:
             import anthropic
-            if self.anthropic_base_url:
+            if self.es_proxy:
                 # A traves del proxy: solo el token Bearer, sin enviar la clave real de Anthropic
                 self._cliente_anthropic = anthropic.Anthropic(base_url=self.anthropic_base_url,
                                                               auth_token=self.anthropic_token)
@@ -477,12 +538,24 @@ class IA:
             on_texto(t)
         for _ in range(MAX_VUELTAS):
             emitido, acumulado = "", ""
+            buscador = self.busqueda_nube and "claude" in modelo
+            # con el buscador de Claude (todo internet), buscar_web (DuckDuckGo/Wikipedia) sobra
+            tools = ([t for t in self.tools if t.get("name") != "buscar_web"] + [BUSQUEDA_CLAUDE]) if buscador \
+                else self.tools
             try:
                 with self._cliente().messages.stream(
-                        model=modelo, max_tokens=800, system=self.system_fn(), tools=self.tools,
-                        messages=self._con_contexto(self._a_anthropic(history)),
+                        model=modelo, max_tokens=1200, system=self.system_fn(), tools=tools,
+                        messages=self._con_contexto(self._a_anthropic(history, crudo=buscador)),
                         timeout=Timeout(30.0, connect=ESPERA_PRIMER_TOKEN, read=ESPERA_PRIMER_TOKEN)) as st:
-                    for trozo in st.text_stream:
+                    for ev in st:
+                        if ev.type == "content_block_start" and \
+                                getattr(ev.content_block, "type", "") == "server_tool_use":
+                            if on_texto and not dicho[0]:     # Claude empieza a buscar: que no haya silencio
+                                decir(ESPERAS[int(time.time()) % len(ESPERAS)])
+                            continue
+                        if ev.type != "text":
+                            continue
+                        trozo = ev.text
                         acumulado += trozo
                         if on_texto:
                             limpio = _limpiar_parcial(acumulado)
@@ -493,22 +566,36 @@ class IA:
                 self._ultimo_uso = time.time()
             except Exception as e:
                 txt = str(e)
+                if buscador and "web_search" in txt and not emitido:
+                    self.busqueda_nube = False             # este proveedor no tiene el buscador: seguir sin el
+                    if self.on_reparacion:
+                        self.on_reparacion("ia", f"el buscador de Claude no esta disponible ({txt[:80]}): uso buscar_web")
+                    continue
                 if "credit balance" in txt:
                     raise IAError("Tu cuenta de Anthropic no tiene saldo.",
                                   "La API de Anthropic no tiene saldo (la suscripción de claude.ai no lo incluye). "
-                                  "Añade saldo en console.anthropic.com o usa Ollama.")
+                                  "Añade saldo en console.anthropic.com o usa OmniRoute.", permanente=True)
                 if "401" in txt or "authentication" in txt.lower():
-                    raise IAError("La clave de Anthropic no es válida.", "ANTHROPIC_API_KEY no es válida.")
+                    clave = "ANTHROPIC_AUTH_TOKEN (OmniRoute)" if self.es_proxy else "ANTHROPIC_API_KEY"
+                    raise IAError("La clave de Anthropic no es válida.", f"{clave} no es válida.", permanente=True)
                 raise IAError("No he podido conectar con Claude.", f"Error de Claude ({modelo}): {txt[:200]}")
-            texto = "".join(b.text for b in resp.content if b.type == "text").strip()
+            if self.on_externo and any(b.type == "server_tool_use" for b in resp.content):
+                self.on_externo()                  # ha leido internet: mismas cautelas que con buscar_web
+            texto = _MARCA_RE.sub("", "".join(b.text for b in resp.content if b.type == "text")).strip()
             usos = [b for b in resp.content if b.type == "tool_use"]
+            extra = {}
+            if f := _fuentes(resp.content):
+                # la busqueda real se guarda tal cual: si solo quedara el texto, en el turno siguiente Claude ve
+                # citas sin busqueda y cree que las ha inventado
+                extra = {"busquedas": f, "nube": [_a_dict(b) for b in resp.content
+                                                  if b.type in ("server_tool_use", "web_search_tool_result", "text")]}
             if resp.stop_reason != "tool_use" or not usos:
                 if on_texto and texto and not emitido:
                     decir(texto)
-                history.append({"role": "assistant", "content": texto})
+                history.append({"role": "assistant", "content": texto, **extra})
                 return texto
             calls = [{"id": b.id, "name": b.name, "args": dict(b.input)} for b in usos]
-            history.append({"role": "assistant", "content": texto, "tool_calls": calls})
+            history.append({"role": "assistant", "content": texto, "tool_calls": calls, **extra})
             if on_texto and not dicho[0] and any(c["name"] in CONSULTAS for c in calls):
                 decir(ESPERAS[int(time.time()) % len(ESPERAS)])     # que no haya silencio mientras busca
             resultados = []
@@ -526,15 +613,18 @@ class IA:
         return "He hecho varias consultas pero no he llegado a una respuesta clara."
 
     @staticmethod
-    def _a_anthropic(history):
+    def _a_anthropic(history, crudo=False):
+        """crudo=True: las busquedas de Claude se reenvian con sus bloques reales (solo si lleva el buscador)."""
         out = []
         for m in history:
             if m["role"] == "user":
                 out.append({"role": "user", "content": m["content"]})
             elif m["role"] == "assistant":
                 bloques = []
-                if m.get("content"):
-                    bloques.append({"type": "text", "text": m["content"]})
+                if crudo and m.get("nube"):
+                    bloques.extend(m["nube"])
+                elif _con_fuentes(m):
+                    bloques.append({"type": "text", "text": _con_fuentes(m)})
                 for c in m.get("tool_calls", []):
                     bloques.append({"type": "tool_use", "id": c["id"], "name": c["name"], "input": c["args"]})
                 out.append({"role": "assistant", "content": bloques or [{"type": "text", "text": "..."}]})
