@@ -10,6 +10,31 @@ Las mejoras propuestas esperan en **Pendiente de aprobación** (al final) hasta 
 
 ---
 
+## [1.9.0] - 17/10/2026 - Cadena de proveedores gratuitos
+**Por qué:** gastar menos y que Jarvis no se quede sin cerebro si Claude se agota.
+
+- **Cadena gratuita:** si Claude (tu suscripción, por OmniRoute) falla o se agota, Jarvis prueba en orden
+  Gemini 3 Flash y Claude Sonnet 4.6 (Antigravity), GPT-5.6 Luna (DuckDuckGo) y `auto/best-fast`, y al
+  final Ollama. Se cambia con `MODELOS_GRATIS`. Elegidos midiendo 24 modelos: todos
+  responden en español y usan herramientas. **`auto/best-free`, el respaldo de antes, no usaba herramientas**
+  (no podía apuntar, mirar la hora o el tiempo), por eso sale de la cadena.
+- **Límite de uso (429):** ese modelo descansa 1 min y se pasa al siguiente sin esperar.
+- **El buscador de Claude solo se pide a Claude de Anthropic** (`cc/`, `claude/`): `antigravity/claude-...`
+  no lo tiene, y si un modelo no lo admite se quita solo a ese modelo, no a todos.
+- **Ya no dice que ha hecho algo que falló:** visto en la prueba real («Anotado queda en el diario» con la
+  herramienta fallando). Tras un fallo, Jarvis no habla hasta tener la respuesta completa y, si afirma
+  haberlo hecho, dice la verdad.
+- **OmniRoute ya no se lleva tus claves de Jarvis:** se abría desde la carpeta de Jarvis y leía su `.env`
+  (WhatsApp, ElevenLabs...). Ahora arranca desde `~/.omniroute` y sin esas variables.
+- **«mi combo» de OmniRoute arreglado:** solo tenía un modelo y estaba roto (Codex sin configurar). Ahora:
+  Claude Sonnet 4.6 y Gemini 3 Flash (gratis), Claude Sonnet 5.5 (suscripción), GPT-5.6 Luna y
+  `auto/best-fast`, con tu estrategia `context-relay`. Copia del original en `~/.omniroute/copias/`.
+- **Guía de proveedores gratuitos** en el LEEME (Google AI Studio, Groq, Cerebras, OpenRouter, Mistral...).
+
+**Comprobado:** 170 pruebas automáticas; prueba real con Claude «agotado»: respondió Gemini gratis en
+1,5-6 s usando hora, tiempo y diario, y ante un fallo del diario lo dijo en vez de mentir; «mi combo»
+respondió en 4 s.
+
 ## [1.8.0] - 17/10/2026 - Arranque a prueba de fallos e internet de verdad
 **Por qué:** «falla cada vez que lo enciendo» y «no sabe nada actual». Se reprodujo y había cinco causas.
 

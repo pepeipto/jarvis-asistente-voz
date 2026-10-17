@@ -89,6 +89,10 @@ empieza a hablar.
 Fuera del repositorio (ver `.gitignore`): `.env` (claves), `google/` (permisos de Google), `cerebro/`
 (tus notas), registros y entornos. El registro de errores no guarda lo que dices, ni correos ni notas.
 
+## Versión 1.9
+Cadena de proveedores gratuitos: si Claude se agota, responde Gemini o GPT gratis por OmniRoute; nunca dice
+que ha hecho algo que falló. Guía para añadir más proveedores gratis en [LEEME.md](LEEME.md).
+
 ## Versión 1.8
 Arranque a prueba de fallos (abre OmniRoute solo, nunca se queda callado) e internet de verdad: usa el
 buscador de Claude en todo internet, lee páginas y da el tiempo. Detalle en [CHANGELOG.md](CHANGELOG.md).
